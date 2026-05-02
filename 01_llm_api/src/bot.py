@@ -6,9 +6,11 @@ CLI бот для взаимодействия с LLM через OpenRouter.
 
 import os
 import sys
-from typing import List, Dict, Optional
+from typing import List, Optional, cast
+
 from dotenv import load_dotenv
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -51,7 +53,7 @@ class ChatBot:
             base_url=base_url,
         )
 
-        self.conversation_history: List[Dict[str, str]] = []
+        self.conversation_history: List[ChatCompletionMessageParam] = []
 
         if SYSTEM_PROMPT:
             self.conversation_history.append({
@@ -68,12 +70,11 @@ class ChatBot:
 
     def add_message(self, role: str, content: str):
         """Добавить сообщение в историю диалога."""
-        self.conversation_history.append({
-            "role": role,
-            "content": content
-        })
+        self.conversation_history.append(
+            cast(ChatCompletionMessageParam, {"role": role, "content": content})
+        )
 
-        prefix: List[Dict[str, str]] = []
+        prefix: List[ChatCompletionMessageParam] = []
         dialog = self.conversation_history
         if dialog and dialog[0]["role"] == "system":
             prefix = [dialog[0]]
@@ -160,7 +161,7 @@ class ChatBot:
                     messages=self.conversation_history,
                 )
 
-            assistant_message = response.choices[0].message.content
+            assistant_message = response.choices[0].message.content or ""
             finish_reason = response.choices[0].finish_reason
 
             self.add_message("assistant", assistant_message)

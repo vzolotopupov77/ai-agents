@@ -1,0 +1,5 @@
+{
+  "include": ["01_llm_api"],
+  "venvPath": "01_llm_api",
+  "venv": ".venv"
+}

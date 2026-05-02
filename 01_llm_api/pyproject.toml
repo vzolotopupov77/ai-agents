@@ -19,3 +19,8 @@ packages = ["src"]
 
 [tool.uv]
 dev-dependencies = []
+
+# Чтобы IDE / Pyright подхватили зависимости из .venv после `uv sync`
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
