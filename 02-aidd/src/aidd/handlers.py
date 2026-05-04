@@ -20,7 +20,7 @@ def register_handlers(
     @router.message(CommandStart())
     async def handle_start(message: Message) -> None:
         await message.answer(
-            "Привет! Я готов помочь. Напишите любой вопрос.",
+            "Привет! Я коуч карьерного развития. Помогу с резюме, подготовкой к интервью или стратегией поиска работы. С чего начнём?",
         )
 
     @router.message(F.text)
