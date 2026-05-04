@@ -22,6 +22,22 @@ _TABLE_SEP_RE = re.compile(r"^\|?\s*:?[\-:]+[\s\-:|]*$")
 _MD_HEADER_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _BR_TAGS_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+# Курсив *текст*, не часть ** (ASCII звёздочки, как у моделей)
+_ITALIC_MD_RE = re.compile(r"(?<!\*)\*(?!\*)([^*\n]+?)\*(?!\*)")
+
+
+def _escape_plain_with_italic(t: str) -> str:
+    """Экранирует фрагмент и превращает *курсив* в <i>…</i>."""
+    if not t:
+        return ""
+    parts: list[str] = []
+    pos = 0
+    for m in _ITALIC_MD_RE.finditer(t):
+        parts.append(html.escape(t[pos : m.start()]))
+        parts.append("<i>" + html.escape(m.group(1)) + "</i>")
+        pos = m.end()
+    parts.append(html.escape(t[pos:]))
+    return "".join(parts)
 
 
 def _md_links_to_html_segment(s: str) -> str:
@@ -38,15 +54,15 @@ def _md_links_to_html_segment(s: str) -> str:
     pos = 0
     buf: list[str] = []
     for m in _MD_LINK_RE.finditer(s):
-        buf.append(html.escape(s[pos : m.start()]))
+        buf.append(_escape_plain_with_italic(s[pos : m.start()]))
         buf.append(repl(m))
         pos = m.end()
-    buf.append(html.escape(s[pos:]))
+    buf.append(_escape_plain_with_italic(s[pos:]))
     return "".join(buf)
 
 
 def _inline_markdown_to_html_line(line: str) -> str:
-    """Жирный ** ** и ссылки [text](url); при непарном ** — строка без жирного, ссылки обрабатываются."""
+    """Жирный ** **, курсив * *, ссылки [text](url); при непарном ** — без жирного."""
     if line.count("**") % 2 != 0:
         return _md_links_to_html_segment(line)
 
@@ -76,6 +92,17 @@ def _markdownish_to_telegram_html(text: str) -> str:
             continue
         if stripped in ("---", "***", "___"):
             lines_out.append("")
+            continue
+        if stripped.startswith(">"):
+            body = stripped[1:].lstrip()
+            if body:
+                lines_out.append(
+                    "<blockquote>"
+                    + _inline_markdown_to_html_line(body)
+                    + "</blockquote>",
+                )
+            else:
+                lines_out.append("")
             continue
         if _TABLE_SEP_RE.match(stripped):
             continue
