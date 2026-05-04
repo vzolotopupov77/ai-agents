@@ -81,7 +81,10 @@ def _markdownish_to_telegram_html(text: str) -> str:
             cells = [c for c in cells if c]
             if cells:
                 lines_out.append(
-                    "• " + " · ".join(html.escape(c) for c in cells),
+                    "• "
+                    + " · ".join(
+                        _inline_markdown_to_html_line(c) for c in cells
+                    ),
                 )
             continue
         m = _MD_HEADER_RE.match(stripped)
