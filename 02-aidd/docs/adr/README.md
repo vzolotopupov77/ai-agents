@@ -8,5 +8,6 @@
 | 0002 | [0002-telegram-long-polling.md](./0002-telegram-long-polling.md) | Входящие обновления через long polling, без webhook |
 | 0003 | [0003-openrouter-via-openai-sdk.md](./0003-openrouter-via-openai-sdk.md) | Доступ к моделям через OpenRouter официальным клиентом `openai` |
 | 0004 | [0004-telegram-decoupled-from-llm-layer.md](./0004-telegram-decoupled-from-llm-layer.md) | Слой LLM не зависит от aiogram; граница — список сообщений и текст ответа |
+| 0005 | [0005-dockerfile-uv-slim.md](./0005-dockerfile-uv-slim.md) | Образ на Python 3.12 slim, uv из официального образа, двухшаговый `uv sync`, `.env` снаружи |
 
 Общее техническое видение: [../vision.md](../vision.md).
