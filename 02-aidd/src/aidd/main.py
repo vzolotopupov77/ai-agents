@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher, Router
 from dotenv import load_dotenv
 
 from aidd.config import Config
+from aidd.dialog_store import DialogStore
 from aidd.handlers import register_handlers
 from aidd.llm_client import LLMClient
 
@@ -31,8 +32,9 @@ async def main() -> None:
     log.info("Starting polling")
 
     llm = LLMClient(config)
+    store = DialogStore(config.max_history_messages)
     router = Router()
-    register_handlers(router, llm)
+    register_handlers(router, llm, store)
 
     dp = Dispatcher()
     dp.include_router(router)

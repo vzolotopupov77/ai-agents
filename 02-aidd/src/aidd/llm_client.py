@@ -23,20 +23,27 @@ class LLMClient:
             max_retries=0,
         )
 
-    async def ask(self, user_text: str) -> str:
+    async def ask(
+        self,
+        user_text: str,
+        history: list[dict[str, str]],
+    ) -> str:
         logger.debug(
-            "LLM request model=%s user_chars=%s",
+            "LLM request model=%s user_chars=%s history_len=%s",
             self._config.llm_model,
             len(user_text),
+            len(history),
         )
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": self._config.system_prompt},
+            *history,
+            {"role": "user", "content": user_text},
+        ]
         for attempt in range(_RATE_LIMIT_ATTEMPTS):
             try:
                 response = await self._client.chat.completions.create(
                     model=self._config.llm_model,
-                    messages=[
-                        {"role": "system", "content": self._config.system_prompt},
-                        {"role": "user", "content": user_text},
-                    ],
+                    messages=messages,
                     temperature=self._config.llm_temperature,
                     max_tokens=self._config.llm_max_tokens,
                 )
