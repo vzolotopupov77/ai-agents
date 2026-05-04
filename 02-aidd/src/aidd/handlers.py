@@ -21,6 +21,7 @@ _TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _TABLE_SEP_RE = re.compile(r"^\|?\s*:?[\-:]+[\s\-:|]*$")
 _MD_HEADER_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_BR_TAGS_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 
 
 def _md_links_to_html_segment(s: str) -> str:
@@ -64,6 +65,8 @@ def _markdownish_to_telegram_html(text: str) -> str:
     """Типичный Markdown от LLM -> HTML, поддерживаемый Telegram-ботами (без таблиц)."""
     if not text:
         return ""
+    # Модель часто вставляет <br>; в HTML Telegram это не поддерживается / видно как текст
+    text = _BR_TAGS_RE.sub("\n", text)
     lines_out: list[str] = []
     for raw_line in text.split("\n"):
         line = raw_line.rstrip("\r")
