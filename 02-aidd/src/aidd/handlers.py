@@ -11,6 +11,45 @@ from aidd.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
+# https://core.telegram.org/bots/api#sendmessage
+_TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+
+
+def _chunk_text_for_telegram(text: str, max_len: int = _TELEGRAM_MAX_MESSAGE_LENGTH) -> list[str]:
+    """Разбить текст на части, каждая не длиннее лимита Telegram для одного сообщения."""
+    if not text:
+        return []
+    if max_len < 1:
+        msg = "max_len must be at least 1"
+        raise ValueError(msg)
+    chunks: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+    for line in text.splitlines(keepends=True):
+        if len(line) > max_len:
+            if buf:
+                chunks.append("".join(buf))
+                buf = []
+                buf_len = 0
+            for i in range(0, len(line), max_len):
+                chunks.append(line[i : i + max_len])
+            continue
+        if buf_len + len(line) > max_len:
+            chunks.append("".join(buf))
+            buf = [line]
+            buf_len = len(line)
+        else:
+            buf.append(line)
+            buf_len += len(line)
+    if buf:
+        chunks.append("".join(buf))
+    return chunks
+
+
+async def _answer_in_chunks(message: Message, text: str) -> None:
+    for part in _chunk_text_for_telegram(text):
+        await message.answer(part)
+
 
 def register_handlers(
     router: Router,
@@ -48,4 +87,4 @@ def register_handlers(
             )
             return
         store.add_turn(chat_id, user_text, reply)
-        await message.answer(reply)
+        await _answer_in_chunks(message, reply)
