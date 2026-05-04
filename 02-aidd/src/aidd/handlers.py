@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
+from aiogram.filters import CommandStart
 from aiogram.types import Message
 
 from aidd.dialog_store import DialogStore
@@ -16,6 +17,12 @@ def register_handlers(
     llm: LLMClient,
     store: DialogStore,
 ) -> None:
+    @router.message(CommandStart())
+    async def handle_start(message: Message) -> None:
+        await message.answer(
+            "Привет! Я готов помочь. Напишите любой вопрос.",
+        )
+
     @router.message(F.text)
     async def handle_text(message: Message) -> None:
         user_text = message.text or ""
@@ -32,6 +39,12 @@ def register_handlers(
             logger.exception("LLM request failed")
             await message.answer(
                 "Сервис временно недоступен. Попробуйте позже.",
+            )
+            return
+        if not reply:
+            logger.warning("LLM returned empty reply, chat_id=%s", chat_id)
+            await message.answer(
+                "Сервис не вернул ответ. Попробуйте позже.",
             )
             return
         store.add_turn(chat_id, user_text, reply)
