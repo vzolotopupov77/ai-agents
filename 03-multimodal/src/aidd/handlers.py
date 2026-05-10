@@ -3,6 +3,8 @@ from __future__ import annotations
 import html
 import logging
 import re
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
 from aiogram.enums import ParseMode
@@ -12,6 +14,8 @@ from aiogram.types import Message
 
 from aidd.dialog_store import DialogStore
 from aidd.llm_client import LLMClient
+from aidd.transaction import Transaction
+from aidd.transaction_extract import TransactionExtract
 from aidd.transaction_store import TransactionStore
 
 logger = logging.getLogger(__name__)
@@ -207,18 +211,66 @@ def register_handlers(
         )
         history = store.get(chat_id)
         try:
-            reply = await llm.ask(user_text, history)
+            extract = await llm.extract(user_text, history)
         except Exception:
-            logger.exception("LLM request failed")
-            await message.answer(
-                "Сервис временно недоступен. Попробуйте позже.",
-            )
+            logger.exception("LLM extract failed")
+            await message.answer("Сервис временно недоступен. Попробуйте позже.")
             return
-        if not reply:
-            logger.warning("LLM returned empty reply, chat_id=%s", chat_id)
-            await message.answer(
-                "Сервис не вернул ответ. Попробуйте позже.",
-            )
+
+        if not extract.reply:
+            logger.warning("LLM extract returned empty reply, chat_id=%s", chat_id)
+            await message.answer("Сервис не вернул ответ. Попробуйте позже.")
             return
-        store.add_turn(chat_id, user_text, reply)
-        await _answer_in_chunks(message, reply)
+
+        if extract.found:
+            tx = _build_transaction(extract)
+            if tx is not None:
+                tx_store.add(chat_id, tx)
+                logger.debug(
+                    "Transaction added chat_id=%s flow=%s amount=%s category=%s",
+                    chat_id,
+                    tx.flow,
+                    tx.amount,
+                    tx.category,
+                )
+            else:
+                logger.warning(
+                    "LLM returned found=True but transaction fields incomplete, chat_id=%s",
+                    chat_id,
+                )
+
+        store.add_turn(chat_id, user_text, extract.reply)
+        await _answer_in_chunks(message, extract.reply)
+
+
+def _build_transaction(extract: TransactionExtract) -> Transaction | None:
+    """Собрать Transaction из structured output; None при неполных данных."""
+    if extract.flow is None or extract.amount is None or extract.tx_type is None:
+        return None
+    try:
+        amount = Decimal(str(extract.amount))
+    except InvalidOperation:
+        logger.warning("Invalid amount in extract: %s", extract.amount)
+        return None
+    if amount <= 0:
+        logger.warning("Non-positive amount in extract: %s", amount)
+        return None
+
+    ts: datetime
+    if extract.timestamp:
+        try:
+            ts = datetime.fromisoformat(extract.timestamp)
+        except ValueError:
+            logger.warning("Cannot parse timestamp %r, using now", extract.timestamp)
+            ts = datetime.now()
+    else:
+        ts = datetime.now()
+
+    return Transaction(
+        timestamp=ts,
+        flow=extract.flow,
+        amount=amount,
+        tx_type=extract.tx_type,
+        category=extract.category or "прочее",
+        description=extract.description or "",
+    )
