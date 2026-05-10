@@ -24,7 +24,9 @@ _EXTRACT_SYSTEM_SUFFIX = (
     'Если found=true: "flow" ("income"|"expense"), "amount" (number > 0), '
     '"tx_type" ("everyday"|"periodic"|"one-time"), "category" (string), '
     '"description" (string), "timestamp" (ISO-строка или null). '
-    "Если found=false: остальные поля транзакции — null или опусти их."
+    "Если found=false: остальные поля транзакции — null или опусти их. "
+    "Если сумма неясна или приблизительна («около», «тысячу», без числа) — found=false, "
+    'в reply вежливо попроси уточнить сумму; всегда верни корректный JSON.'
 )
 
 # Бесплатные модели на OpenRouter часто отвечают 429; коротких SDK-retries мало.
@@ -77,6 +79,38 @@ def parse_transaction_extract_json(raw: str) -> TransactionExtract:
     )
     msg = "Model returned unparsable JSON for extraction"
     raise ValueError(msg)
+
+
+def _assistant_content_from_completion(response: object) -> str | None:
+    """Текст ответа ассистента; None если провайдер вернул неожиданную форму (без падения)."""
+    choices = getattr(response, "choices", None)
+    model_id = getattr(response, "model", None)
+    if choices is None:
+        logger.warning("LLM completion: choices is None (model=%s)", model_id)
+        return None
+    if len(choices) == 0:
+        logger.warning("LLM completion: choices пустой (model=%s)", model_id)
+        return None
+    ch0 = choices[0]
+    finish = getattr(ch0, "finish_reason", None)
+    logger.debug("LLM completion finish_reason=%s", finish)
+    msg = getattr(ch0, "message", None)
+    if msg is None:
+        logger.warning("LLM completion: choice[0].message is None (model=%s)", model_id)
+        return None
+    raw = getattr(msg, "content", None)
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    refusal = getattr(msg, "refusal", None)
+    if isinstance(refusal, str) and refusal.strip():
+        logger.warning("LLM completion: заполнен refusal вместо content (model=%s)", model_id)
+        return refusal
+    logger.warning(
+        "LLM completion: пустой content (finish_reason=%s model=%s)",
+        finish,
+        model_id,
+    )
+    return None
 
 
 class LLMClient:
@@ -138,8 +172,7 @@ class LLMClient:
                 await asyncio.sleep(delay)
                 continue
 
-            message = response.choices[0].message
-            content = message.content
+            content = _assistant_content_from_completion(response)
             if not content:
                 logger.warning("LLM returned empty content")
                 return ""
@@ -214,9 +247,9 @@ class LLMClient:
                 await asyncio.sleep(delay)
                 continue
 
-            content = response.choices[0].message.content
+            content = _assistant_content_from_completion(response)
             if not content:
-                logger.warning("LLM extract returned empty content")
+                logger.warning("LLM extract returned empty or malformed completion body")
                 msg = "Model returned empty structured output"
                 raise ValueError(msg)
 
