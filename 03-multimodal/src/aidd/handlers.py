@@ -16,7 +16,7 @@ from aidd.dialog_store import DialogStore
 from aidd.llm_client import LLMClient
 from aidd.transaction import Transaction
 from aidd.transaction_extract import TransactionExtract
-from aidd.transaction_store import TransactionStore
+from aidd.transaction_store import TransactionStore, format_transaction_confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -222,10 +222,12 @@ def register_handlers(
             await message.answer("Сервис не вернул ответ. Попробуйте позже.")
             return
 
+        assistant_reply = extract.reply
         if extract.found:
             tx = _build_transaction(extract)
             if tx is not None:
                 tx_store.add(chat_id, tx)
+                assistant_reply = format_transaction_confirmation(tx)
                 logger.debug(
                     "Transaction added chat_id=%s flow=%s amount=%s category=%s",
                     chat_id,
@@ -239,8 +241,8 @@ def register_handlers(
                     chat_id,
                 )
 
-        store.add_turn(chat_id, user_text, extract.reply)
-        await _answer_in_chunks(message, extract.reply)
+        store.add_turn(chat_id, user_text, assistant_reply)
+        await _answer_in_chunks(message, assistant_reply)
 
 
 def _build_transaction(extract: TransactionExtract) -> Transaction | None:

@@ -17,6 +17,42 @@ def _format_money(amount: Decimal) -> str:
     return str(amount.quantize(Decimal("0.01")))
 
 
+def _sanitize_confirmation_fragment(s: str) -> str:
+    """Убирает символы, которые ломают Markdown→HTML в Telegram."""
+    return s.replace("*", "·").replace("_", "·").replace("`", "'")
+
+
+def format_transaction_confirmation(tx: Transaction) -> str:
+    """Подробное текстовое подтверждение записи (чат и история диалога)."""
+    flow_ru = "Доход" if tx.flow == "income" else "Расход"
+    sign = "+" if tx.flow == "income" else "−"
+    amt = _format_money(tx.amount)
+    tx_type_ru = _TX_TYPE_LABEL.get(tx.tx_type, tx.tx_type)
+    dt_str = tx.timestamp.strftime("%d.%m.%Y %H:%M")
+
+    cat = _sanitize_confirmation_fragment(tx.category.strip() or "прочее")
+    desc_raw = tx.description.strip()
+    desc = _sanitize_confirmation_fragment(desc_raw) if desc_raw else ""
+
+    lines: list[str] = [
+        "**Записано в учёт**",
+        f"• **Тип:** {flow_ru}",
+        f"• **Сумма:** {sign}{amt} ₽",
+        f"• **Категория:** {cat}",
+        f"• **Тип операции:** {tx_type_ru}",
+        f"• **Дата и время:** {dt_str}",
+    ]
+    if desc:
+        lines.append(f"• **Описание:** {desc}")
+    lines.extend(
+        [
+            "",
+            "Сводку по всем операциям можно посмотреть командой **/report**.",
+        ],
+    )
+    return "\n".join(lines)
+
+
 class TransactionStore:
     """Хранение транзакций в памяти процесса, ключ — chat_id."""
 
