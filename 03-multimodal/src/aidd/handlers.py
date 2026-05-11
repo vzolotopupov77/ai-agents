@@ -182,6 +182,43 @@ async def _answer_in_chunks(message: Message, text: str) -> None:
                 await message.answer(plain_chunk)
 
 
+def _assistant_reply_after_extract(
+    extract: TransactionExtract,
+    chat_id: int,
+    tx_store: TransactionStore,
+    *,
+    log_added_prefix: str = "Transaction added",
+) -> str | None:
+    """Текст ответа пользователю или None, если показывать нейтральную ошибку.
+
+    Некоторые модели (например малые веса в Ollama) возвращают found=true и поля
+    транзакции, но оставляют reply пустым — тогда используем подтверждение из учёта.
+    """
+    reply = (extract.reply or "").strip()
+
+    if extract.found:
+        tx = _build_transaction(extract)
+        if tx is not None:
+            tx_store.add(chat_id, tx)
+            out = format_transaction_confirmation(tx)
+            logger.debug(
+                "%s chat_id=%s flow=%s amount=%s category=%s",
+                log_added_prefix,
+                chat_id,
+                tx.flow,
+                tx.amount,
+                tx.category,
+            )
+            return out
+        logger.warning(
+            "LLM returned found=True but transaction fields incomplete, chat_id=%s",
+            chat_id,
+        )
+        return reply if reply else None
+
+    return reply if reply else None
+
+
 def register_handlers(
     router: Router,
     llm: LLMClient,
@@ -218,29 +255,11 @@ def register_handlers(
             await message.answer("Сервис временно недоступен. Попробуйте позже.")
             return
 
-        if not extract.reply:
+        assistant_reply = _assistant_reply_after_extract(extract, chat_id, tx_store)
+        if assistant_reply is None:
             logger.warning("LLM extract returned empty reply, chat_id=%s", chat_id)
             await message.answer("Сервис не вернул ответ. Попробуйте позже.")
             return
-
-        assistant_reply = extract.reply
-        if extract.found:
-            tx = _build_transaction(extract)
-            if tx is not None:
-                tx_store.add(chat_id, tx)
-                assistant_reply = format_transaction_confirmation(tx)
-                logger.debug(
-                    "Transaction added chat_id=%s flow=%s amount=%s category=%s",
-                    chat_id,
-                    tx.flow,
-                    tx.amount,
-                    tx.category,
-                )
-            else:
-                logger.warning(
-                    "LLM returned found=True but transaction fields incomplete, chat_id=%s",
-                    chat_id,
-                )
 
         store.add_turn(chat_id, user_text, assistant_reply)
         await _answer_in_chunks(message, assistant_reply)
@@ -274,29 +293,16 @@ def register_handlers(
             await message.answer("Сервис временно недоступен. Попробуйте позже.")
             return
 
-        if not extract.reply:
+        assistant_reply = _assistant_reply_after_extract(
+            extract,
+            chat_id,
+            tx_store,
+            log_added_prefix="Transaction from photo",
+        )
+        if assistant_reply is None:
             logger.warning("VLM extract returned empty reply, chat_id=%s", chat_id)
             await message.answer("Сервис не вернул ответ. Попробуйте позже.")
             return
-
-        assistant_reply = extract.reply
-        if extract.found:
-            tx = _build_transaction(extract)
-            if tx is not None:
-                tx_store.add(chat_id, tx)
-                assistant_reply = format_transaction_confirmation(tx)
-                logger.debug(
-                    "Transaction from photo chat_id=%s flow=%s amount=%s category=%s",
-                    chat_id,
-                    tx.flow,
-                    tx.amount,
-                    tx.category,
-                )
-            else:
-                logger.warning(
-                    "VLM returned found=True but transaction fields incomplete, chat_id=%s",
-                    chat_id,
-                )
 
         store.add_turn(chat_id, "[фото чека]", assistant_reply)
         await _answer_in_chunks(message, assistant_reply)
