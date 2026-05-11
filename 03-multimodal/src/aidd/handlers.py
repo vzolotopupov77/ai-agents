@@ -192,6 +192,7 @@ def register_handlers(
     async def handle_start(message: Message) -> None:
         await message.answer(
             "Привет! Я финансовый советник. Рассказывайте о тратах и доходах — я буду вести учёт.\n"
+            "Можно прислать фото чека — попробую из него записать операцию.\n"
             "Команда /report покажет ваш баланс.",
         )
 
