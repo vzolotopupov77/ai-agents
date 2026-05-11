@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # OpenRouter / часть моделей не отдаёт контент в формате strict structured output;
 # json_object + суффикс системному промпту и ручной разбор надёжнее beta.parse.
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+# Некоторые OSS-модели на OpenRouter вставляют служебные токены вместо чистого JSON.
+_SPECIAL_TOKEN_RE = re.compile(r"<\|[a-zA-Z0-9_/.:-]+\|>")
 
 _EXTRACT_SYSTEM_SUFFIX = (
     "\n\n[Формат ответа] Ответь только одним JSON-объектом на русском там, где это текст "
@@ -42,6 +44,33 @@ def _extract_system_content(base_prompt: str) -> str:
     return base_prompt.rstrip() + _EXTRACT_SYSTEM_SUFFIX
 
 
+def _sanitize_raw_llm_json_text(raw: str) -> str:
+    """Убрать артефакты генерации, мешающие json.loads / Pydantic."""
+    s = (raw or "").strip()
+    s = _SPECIAL_TOKEN_RE.sub("", s)
+    s = "".join(ch if (ord(ch) >= 32 or ch in "\n\r\t") else " " for ch in s)
+    return s.strip()
+
+
+def _balanced_brace_objects(text: str) -> list[str]:
+    """Подстроки {...} с совпадающей глубиной скобок (без разбора строковых литералов)."""
+    out: list[str] = []
+    depth = 0
+    start: int | None = None
+    for i, c in enumerate(text):
+        if c == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    out.append(text[start : i + 1])
+                    start = None
+    return out
+
+
 def _json_candidates(raw: str) -> list[str]:
     """Варианты строк для парсинга JSON из ответа модели."""
     text = (raw or "").strip()
@@ -56,6 +85,7 @@ def _json_candidates(raw: str) -> list[str]:
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         out.append(text[start : end + 1])
+    out.extend(reversed(_balanced_brace_objects(text)))
     # сохраняем порядок, убираем дубликаты
     seen: set[str] = set()
     unique: list[str] = []
@@ -68,14 +98,15 @@ def _json_candidates(raw: str) -> list[str]:
 
 def parse_transaction_extract_json(raw: str) -> TransactionExtract:
     """Разобрать ответ модели в TransactionExtract (строго или из fenced / первого объекта)."""
+    cleaned = _sanitize_raw_llm_json_text(raw)
     errors: list[str] = []
-    for candidate in _json_candidates(raw):
+    for candidate in _json_candidates(cleaned):
         try:
             return TransactionExtract.model_validate_json(candidate)
         except (json.JSONDecodeError, ValueError, ValidationError) as exc:
             errors.append(f"{type(exc).__name__}: {exc}")
             continue
-    preview = (raw or "").strip().replace("\n", " ")[:120]
+    preview = cleaned.replace("\n", " ")[:120]
     logger.warning(
         "Cannot parse TransactionExtract JSON preview=%r errors=%s",
         preview,
@@ -318,7 +349,25 @@ class LLMClient:
                 msg = "Model returned empty structured output"
                 raise ValueError(msg)
 
-            result = parse_transaction_extract_json(content)
+            try:
+                result = parse_transaction_extract_json(content)
+            except ValueError:
+                logger.warning(
+                    "LLM extract JSON parse failed, retry without response_format (model=%s)",
+                    self._config.llm_model,
+                )
+                response = await self._client.chat.completions.create(
+                    model=self._config.llm_model,
+                    messages=messages,
+                    temperature=self._config.llm_temperature,
+                    max_tokens=self._config.llm_max_tokens,
+                )
+                content = _assistant_content_from_completion(response)
+                if not content:
+                    logger.warning("LLM extract parse retry returned empty body")
+                    msg = "Model returned empty structured output"
+                    raise ValueError(msg)
+                result = parse_transaction_extract_json(content)
             logger.debug("LLM extract found=%s", result.found)
             return result
 
@@ -417,7 +466,25 @@ class LLMClient:
                 msg = "Model returned empty structured output"
                 raise ValueError(msg)
 
-            result = parse_transaction_extract_json(content)
+            try:
+                result = parse_transaction_extract_json(content)
+            except ValueError:
+                logger.warning(
+                    "VLM extract JSON parse failed, retry without response_format (model=%s)",
+                    self._config.vlm_model,
+                )
+                response = await self._client.chat.completions.create(
+                    model=self._config.vlm_model,
+                    messages=messages,
+                    temperature=self._config.llm_temperature,
+                    max_tokens=self._config.llm_max_tokens,
+                )
+                content = _assistant_content_from_completion(response)
+                if not content:
+                    logger.warning("VLM extract parse retry returned empty body")
+                    msg = "Model returned empty structured output"
+                    raise ValueError(msg)
+                result = parse_transaction_extract_json(content)
             logger.debug("VLM extract found=%s", result.found)
             return result
 
