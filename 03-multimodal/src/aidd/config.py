@@ -36,6 +36,7 @@ class Config:
     openrouter_api_key: str
     openrouter_base_url: str
     llm_model: str
+    vlm_model: str
     system_prompt: str
     max_history_messages: int
     log_level: str
@@ -49,6 +50,7 @@ class Config:
             openrouter_api_key=_require("OPENROUTER_API_KEY"),
             openrouter_base_url=_require("OPENROUTER_BASE_URL"),
             llm_model=_require("LLM_MODEL"),
+            vlm_model=_require("VLM_MODEL"),
             system_prompt=_require("SYSTEM_PROMPT"),
             max_history_messages=_parse_int("MAX_HISTORY_MESSAGES"),
             log_level=_require("LOG_LEVEL"),

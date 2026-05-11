@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
+from typing import Any
 
 from openai import AsyncOpenAI, BadRequestError, RateLimitError
 from pydantic import ValidationError
@@ -32,6 +34,8 @@ _EXTRACT_SYSTEM_SUFFIX = (
 # Бесплатные модели на OpenRouter часто отвечают 429; коротких SDK-retries мало.
 _RATE_LIMIT_ATTEMPTS = 4
 _RATE_LIMIT_BASE_DELAY_SEC = 3.0
+
+_VLM_IMAGE_PROMPT = "Это фото чека. Извлеки операцию."
 
 
 def _extract_system_content(base_prompt: str) -> str:
@@ -259,4 +263,89 @@ class LLMClient:
 
         # Недостижимо, но требуется для mypy
         msg = "extract: exhausted retry loop without result"
+        raise RuntimeError(msg)
+
+    async def extract_from_image(
+        self,
+        image_bytes: bytes,
+        mime_type: str,
+        history: list[dict[str, str]],
+    ) -> TransactionExtract:
+        """Извлечь транзакцию из изображения чека (VLM + тот же JSON, что для текста)."""
+        logger.debug(
+            "VLM extract model=%s image_bytes=%s history_len=%s",
+            self._config.vlm_model,
+            len(image_bytes),
+            len(history),
+        )
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        data_url = f"data:{mime_type};base64,{b64}"
+        user_content: list[dict[str, Any]] = [
+            {"type": "image_url", "image_url": {"url": data_url}},
+            {"type": "text", "text": _VLM_IMAGE_PROMPT},
+        ]
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": _extract_system_content(self._config.system_prompt)},
+            *history,
+            {"role": "user", "content": user_content},
+        ]
+        for attempt in range(_RATE_LIMIT_ATTEMPTS):
+            try:
+                try:
+                    response = await self._client.chat.completions.create(
+                        model=self._config.vlm_model,
+                        messages=messages,
+                        temperature=self._config.llm_temperature,
+                        max_tokens=self._config.llm_max_tokens,
+                        response_format={"type": "json_object"},
+                    )
+                except BadRequestError:
+                    logger.warning(
+                        "json_object response_format rejected for VLM, retrying without it "
+                        "(model=%s)",
+                        self._config.vlm_model,
+                    )
+                    response = await self._client.chat.completions.create(
+                        model=self._config.vlm_model,
+                        messages=messages,
+                        temperature=self._config.llm_temperature,
+                        max_tokens=self._config.llm_max_tokens,
+                    )
+            except RateLimitError as exc:
+                if attempt + 1 >= _RATE_LIMIT_ATTEMPTS:
+                    logger.error(
+                        "VLM extract rate limited after %s attempts",
+                        _RATE_LIMIT_ATTEMPTS,
+                    )
+                    raise
+                delay = _RATE_LIMIT_BASE_DELAY_SEC * (2**attempt)
+                ra = None
+                resp = exc.response
+                if resp is not None:
+                    ra = resp.headers.get("retry-after")
+                if ra is not None:
+                    try:
+                        delay = max(delay, float(ra))
+                    except ValueError:
+                        pass
+                logger.warning(
+                    "VLM extract rate limited (429), retry in %.1f s, attempt %s/%s",
+                    delay,
+                    attempt + 1,
+                    _RATE_LIMIT_ATTEMPTS,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            content = _assistant_content_from_completion(response)
+            if not content:
+                logger.warning("VLM extract returned empty or malformed completion body")
+                msg = "Model returned empty structured output"
+                raise ValueError(msg)
+
+            result = parse_transaction_extract_json(content)
+            logger.debug("VLM extract found=%s", result.found)
+            return result
+
+        msg = "extract_from_image: exhausted retry loop without result"
         raise RuntimeError(msg)

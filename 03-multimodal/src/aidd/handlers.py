@@ -244,6 +244,62 @@ def register_handlers(
         store.add_turn(chat_id, user_text, assistant_reply)
         await _answer_in_chunks(message, assistant_reply)
 
+    @router.message(F.photo)
+    async def handle_photo(message: Message) -> None:
+        chat_id = message.chat.id
+        photo = message.photo[-1]
+        logger.debug(
+            "Inbound photo message, chat_id=%s file_id=%s",
+            chat_id,
+            photo.file_id,
+        )
+        try:
+            buf = await message.bot.download(photo)
+            if buf is None:
+                logger.warning("Photo download returned None chat_id=%s", chat_id)
+                await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
+                return
+            image_bytes = buf.read()
+        except Exception:
+            logger.exception("Photo download failed chat_id=%s", chat_id)
+            await message.answer("Не удалось загрузить фото. Попробуйте ещё раз.")
+            return
+
+        history = store.get(chat_id)
+        try:
+            extract = await llm.extract_from_image(image_bytes, "image/jpeg", history)
+        except Exception:
+            logger.exception("VLM extract failed chat_id=%s", chat_id)
+            await message.answer("Сервис временно недоступен. Попробуйте позже.")
+            return
+
+        if not extract.reply:
+            logger.warning("VLM extract returned empty reply, chat_id=%s", chat_id)
+            await message.answer("Сервис не вернул ответ. Попробуйте позже.")
+            return
+
+        assistant_reply = extract.reply
+        if extract.found:
+            tx = _build_transaction(extract)
+            if tx is not None:
+                tx_store.add(chat_id, tx)
+                assistant_reply = format_transaction_confirmation(tx)
+                logger.debug(
+                    "Transaction from photo chat_id=%s flow=%s amount=%s category=%s",
+                    chat_id,
+                    tx.flow,
+                    tx.amount,
+                    tx.category,
+                )
+            else:
+                logger.warning(
+                    "VLM returned found=True but transaction fields incomplete, chat_id=%s",
+                    chat_id,
+                )
+
+        store.add_turn(chat_id, "[фото чека]", assistant_reply)
+        await _answer_in_chunks(message, assistant_reply)
+
 
 def _build_transaction(extract: TransactionExtract) -> Transaction | None:
     """Собрать Transaction из structured output; None при неполных данных."""
