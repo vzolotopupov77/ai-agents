@@ -121,8 +121,8 @@ class LLMClient:
     def __init__(self, config: Config) -> None:
         self._config = config
         self._client = AsyncOpenAI(
-            api_key=config.openrouter_api_key,
-            base_url=config.openrouter_base_url,
+            api_key=config.llm_api_key,
+            base_url=config.llm_base_url,
             max_retries=0,
         )
 

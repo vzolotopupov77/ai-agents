@@ -33,8 +33,8 @@ def _parse_float(name: str) -> float:
 @dataclass(frozen=True)
 class Config:
     telegram_bot_token: str
-    openrouter_api_key: str
-    openrouter_base_url: str
+    llm_api_key: str
+    llm_base_url: str
     llm_model: str
     vlm_model: str
     system_prompt: str
@@ -47,8 +47,8 @@ class Config:
     def from_env(cls) -> Config:
         return cls(
             telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
-            openrouter_api_key=_require("OPENROUTER_API_KEY"),
-            openrouter_base_url=_require("OPENROUTER_BASE_URL"),
+            llm_api_key=_require("LLM_API_KEY"),
+            llm_base_url=_require("LLM_BASE_URL"),
             llm_model=_require("LLM_MODEL"),
             vlm_model=_require("VLM_MODEL"),
             system_prompt=_require("SYSTEM_PROMPT"),
