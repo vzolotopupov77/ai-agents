@@ -310,8 +310,9 @@ def register_handlers(
 
 def _build_transaction(extract: TransactionExtract) -> Transaction | None:
     """Собрать Transaction из structured output; None при неполных данных."""
-    if extract.flow is None or extract.amount is None or extract.tx_type is None:
+    if extract.flow is None or extract.amount is None:
         return None
+    tx_type = extract.tx_type or "everyday"
     try:
         amount = Decimal(str(extract.amount))
     except InvalidOperation:
@@ -335,7 +336,7 @@ def _build_transaction(extract: TransactionExtract) -> Transaction | None:
         timestamp=ts,
         flow=extract.flow,
         amount=amount,
-        tx_type=extract.tx_type,
+        tx_type=tx_type,
         category=extract.category or "прочее",
         description=extract.description or "",
     )
