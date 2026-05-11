@@ -85,6 +85,27 @@ def parse_transaction_extract_json(raw: str) -> TransactionExtract:
     raise ValueError(msg)
 
 
+def _text_from_chat_content_field(raw: object) -> str | None:
+    """Нормализовать message.content в строку (строка или список блоков OpenAI / OpenRouter)."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        s = raw.strip()
+        return s if s else None
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for block in raw:
+            if isinstance(block, dict):
+                t = block.get("text")
+                if isinstance(t, str):
+                    parts.append(t)
+            elif isinstance(block, str):
+                parts.append(block)
+        joined = "".join(parts).strip()
+        return joined if joined else None
+    return None
+
+
 def _assistant_content_from_completion(response: object) -> str | None:
     """Текст ответа ассистента; None если провайдер вернул неожиданную форму (без падения)."""
     choices = getattr(response, "choices", None)
@@ -103,12 +124,39 @@ def _assistant_content_from_completion(response: object) -> str | None:
         logger.warning("LLM completion: choice[0].message is None (model=%s)", model_id)
         return None
     raw = getattr(msg, "content", None)
-    if isinstance(raw, str) and raw.strip():
-        return raw
+    text = _text_from_chat_content_field(raw)
+    if text:
+        return text
+
+    for attr in ("reasoning", "reasoning_content"):
+        alt = getattr(msg, attr, None)
+        if isinstance(alt, str) and alt.strip():
+            logger.debug("LLM completion: используем %s (model=%s)", attr, model_id)
+            return alt.strip()
+
     refusal = getattr(msg, "refusal", None)
     if isinstance(refusal, str) and refusal.strip():
         logger.warning("LLM completion: заполнен refusal вместо content (model=%s)", model_id)
         return refusal
+
+    dump_fn = getattr(msg, "model_dump", None)
+    if callable(dump_fn):
+        try:
+            payload = dump_fn()
+            if isinstance(payload, dict):
+                for key in ("content", "reasoning", "reasoning_content"):
+                    t = _text_from_chat_content_field(payload.get(key))
+                    if t:
+                        logger.debug("LLM completion: текст из model_dump[%s]", key)
+                        return t
+        except Exception:
+            logger.debug("LLM completion: model_dump недоступен или упал", exc_info=True)
+
+    legacy = getattr(ch0, "text", None)
+    if isinstance(legacy, str) and legacy.strip():
+        logger.debug("LLM completion: текст из choice.text (legacy)")
+        return legacy.strip()
+
     logger.warning(
         "LLM completion: пустой content (finish_reason=%s model=%s)",
         finish,
@@ -253,6 +301,19 @@ class LLMClient:
 
             content = _assistant_content_from_completion(response)
             if not content:
+                logger.warning(
+                    "LLM extract empty assistant message with json_object, retry without "
+                    "response_format (model=%s)",
+                    self._config.llm_model,
+                )
+                response = await self._client.chat.completions.create(
+                    model=self._config.llm_model,
+                    messages=messages,
+                    temperature=self._config.llm_temperature,
+                    max_tokens=self._config.llm_max_tokens,
+                )
+                content = _assistant_content_from_completion(response)
+            if not content:
                 logger.warning("LLM extract returned empty or malformed completion body")
                 msg = "Model returned empty structured output"
                 raise ValueError(msg)
@@ -338,6 +399,19 @@ class LLMClient:
                 continue
 
             content = _assistant_content_from_completion(response)
+            if not content:
+                logger.warning(
+                    "VLM extract empty assistant message with json_object, retry without "
+                    "response_format (model=%s)",
+                    self._config.vlm_model,
+                )
+                response = await self._client.chat.completions.create(
+                    model=self._config.vlm_model,
+                    messages=messages,
+                    temperature=self._config.llm_temperature,
+                    max_tokens=self._config.llm_max_tokens,
+                )
+                content = _assistant_content_from_completion(response)
             if not content:
                 logger.warning("VLM extract returned empty or malformed completion body")
                 msg = "Model returned empty structured output"
