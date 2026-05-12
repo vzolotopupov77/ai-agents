@@ -39,7 +39,7 @@ class GigaAmModel:
         try:
             segment.export(str(wav_path), format="wav")
             raw = self._model.transcribe(str(wav_path))
-            return (raw or "").strip()
+            return (raw.text if raw is not None else "").strip()
         finally:
             wav_path.unlink(missing_ok=True)
 
