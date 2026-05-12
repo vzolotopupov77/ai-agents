@@ -43,6 +43,84 @@
 - Отчёт **`/report`** отправляется обычным текстом без этой конвертации.
 - Реализация — в [`src/aidd/handlers.py`](src/aidd/handlers.py).
 
+## GPU-сервер (195.209.210.184)
+
+Сервер используется для Ollama (LLM/VLM) и GigaAM-v3 STT-сервиса. Оба процесса должны быть запущены перед стартом бота.
+
+### Требования
+
+- SSH-ключ: `~/.ssh/zva-test-server-084115-vzolotoy.pem`
+- Пользователь: `ubuntu`
+
+### Проверка состояния
+
+```bash
+ssh -i ~/.ssh/zva-test-server-084115-vzolotoy.pem ubuntu@195.209.210.184 \
+  'systemctl is-active ollama && ollama list && curl -s localhost:8765/health && nvidia-smi --query-gpu=name,memory.used,utilization.gpu --format=csv,noheader'
+```
+
+### Управление Ollama
+
+Ollama запущена как **systemd-сервис** и стартует автоматически при перезагрузке ВМ.
+
+```bash
+# Статус
+ssh ... 'systemctl status ollama'
+
+# Рестарт
+ssh ... 'sudo systemctl restart ollama'
+
+# Список загруженных моделей
+ssh ... 'ollama list'
+
+# Загрузить дополнительную модель
+ssh ... 'ollama pull <model>'
+```
+
+API доступен публично: `http://195.209.210.184:11434/v1` (OpenAI-совместимый).
+
+### Управление STT-сервисом
+
+STT-сервис **не управляется systemd** — запущен через `nohup`. При перезагрузке ВМ нужно запустить вручную.
+
+```bash
+# Проверка
+curl http://195.209.210.184:8765/health
+
+# Рестарт (если упал или после обновления кода)
+ssh -i ~/.ssh/zva-test-server-084115-vzolotoy.pem ubuntu@195.209.210.184 \
+  'pkill -f "uvicorn main:app" || true; cd ~/stt_service && nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8765 >> ~/stt_service/stt.log 2>&1 &'
+
+# Просмотр логов
+ssh ... 'tail -f ~/stt_service/stt.log'
+```
+
+> **Первый старт** после перезагрузки ВМ занимает ~30–60 секунд: GigaAM-v3 загружает веса (~650 MB) в VRAM.
+
+### Обновление кода STT-сервиса
+
+```bash
+# 1. Скопировать изменённые файлы
+scp -i ~/.ssh/zva-test-server-084115-vzolotoy.pem stt_service/*.py ubuntu@195.209.210.184:~/stt_service/
+
+# 2. Перезапустить сервис (команда выше)
+```
+
+### Переменные окружения бота
+
+Для подключения бота к сервисам на ВМ укажите в `.env`:
+
+```dotenv
+LLM_BASE_URL=http://195.209.210.184:11434/v1
+VLM_BASE_URL=http://195.209.210.184:11434/v1
+STT_BASE_URL=http://195.209.210.184:8765
+```
+
+### Подробности
+
+- Настройка Ollama, модели, CUDA — [stt_service/README.md](stt_service/README.md)
+- Архитектурное решение — [docs/adr/0006-stt-gigaam-v3-microservice.md](docs/adr/0006-stt-gigaam-v3-microservice.md)
+
 ## Docker
 
 Требования: **Docker**, **make** (или эквивалентные команды `docker`).
