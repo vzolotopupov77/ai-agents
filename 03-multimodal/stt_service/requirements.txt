@@ -1,0 +1,15 @@
+# Развёртывание на GPU-сервере (Ubuntu):
+#
+# 1) PyTorch с CUDA 12.4:
+#    pip install torch==2.5.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124
+#
+# 2) Остальные зависимости (gigaam из GitHub — в PyPI нет моделей v3):
+#    pip install -r requirements.txt
+#
+# 3) Если pip переустановил CPU-сборку torch, повторите шаг 1.
+#
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+pydub>=0.25.1
+gigaam @ git+https://github.com/salute-developers/GigaAM.git

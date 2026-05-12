@@ -30,6 +30,13 @@ def _parse_float(name: str) -> float:
         raise RuntimeError(msg) from exc
 
 
+def _optional_url(name: str) -> str | None:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return raw.strip().rstrip("/")
+
+
 @dataclass(frozen=True)
 class Config:
     telegram_bot_token: str
@@ -42,6 +49,7 @@ class Config:
     log_level: str
     llm_temperature: float
     llm_max_tokens: int
+    stt_base_url: str | None
 
     @classmethod
     def from_env(cls) -> Config:
@@ -56,4 +64,5 @@ class Config:
             log_level=_require("LOG_LEVEL"),
             llm_temperature=_parse_float("LLM_TEMPERATURE"),
             llm_max_tokens=_parse_int("LLM_MAX_TOKENS"),
+            stt_base_url=_optional_url("STT_BASE_URL"),
         )

@@ -16,6 +16,7 @@ from aidd.dialog_store import DialogStore
 from aidd.llm_client import LLMClient
 from aidd.transaction import Transaction
 from aidd.transaction_extract import TransactionExtract
+from aidd.stt_client import SttClient
 from aidd.transaction_store import TransactionStore, format_transaction_confirmation
 
 logger = logging.getLogger(__name__)
@@ -224,26 +225,34 @@ def register_handlers(
     llm: LLMClient,
     store: DialogStore,
     tx_store: TransactionStore,
+    stt: SttClient | None = None,
 ) -> None:
     @router.message(CommandStart())
     async def handle_start(message: Message) -> None:
-        await message.answer(
-            "Привет! Я финансовый советник. Рассказывайте о тратах и доходах — я буду вести учёт.\n"
-            "Можно прислать фото чека — попробую из него записать операцию.\n"
-            "Команда /report покажет ваш баланс.",
+        parts = [
+            "Привет! Я финансовый советник. Рассказывайте о тратах и доходах — я буду вести учёт.",
+        ]
+        if stt is not None:
+            parts.append(
+                "Можно отправить голосовое сообщение — распознаю речь и отвечу как на текст.",
+            )
+        parts.extend(
+            [
+                "Можно прислать фото чека — попробую из него записать операцию.",
+                "Команда /report покажет ваш баланс.",
+            ],
         )
+        await message.answer("\n".join(parts))
 
     @router.message(Command("report"))
     async def handle_report(message: Message) -> None:
         text = tx_store.report_text(message.chat.id)
         await message.answer(text)
 
-    @router.message(F.text)
-    async def handle_text(message: Message) -> None:
-        user_text = message.text or ""
+    async def process_text_turn(message: Message, user_text: str) -> None:
         chat_id = message.chat.id
         logger.debug(
-            "Inbound text message, chat_id=%s length=%s",
+            "Inbound text turn, chat_id=%s length=%s",
             chat_id,
             len(user_text),
         )
@@ -263,6 +272,59 @@ def register_handlers(
 
         store.add_turn(chat_id, user_text, assistant_reply)
         await _answer_in_chunks(message, assistant_reply)
+
+    @router.message(F.text)
+    async def handle_text(message: Message) -> None:
+        await process_text_turn(message, message.text or "")
+
+    @router.message(F.voice)
+    async def handle_voice(message: Message) -> None:
+        if stt is None:
+            await message.answer("Голосовые сообщения не поддерживаются.")
+            return
+
+        chat_id = message.chat.id
+        voice = message.voice
+        if voice is None:
+            return
+
+        logger.debug(
+            "Inbound voice message, chat_id=%s file_id=%s duration=%s",
+            chat_id,
+            voice.file_id,
+            getattr(voice, "duration", None),
+        )
+
+        try:
+            buf = await message.bot.download(voice)
+            if buf is None:
+                logger.warning("Voice download returned None chat_id=%s", chat_id)
+                await message.answer(
+                    "Не удалось загрузить голосовое сообщение. Попробуйте ещё раз.",
+                )
+                return
+            audio_bytes = buf.read()
+        except Exception:
+            logger.exception("Voice download failed chat_id=%s", chat_id)
+            await message.answer(
+                "Не удалось загрузить голосовое сообщение. Попробуйте ещё раз.",
+            )
+            return
+
+        try:
+            user_text = await stt.transcribe(audio_bytes)
+        except Exception:
+            logger.exception("STT transcribe failed chat_id=%s", chat_id)
+            await message.answer("Сервис временно недоступен. Попробуйте позже.")
+            return
+
+        if not user_text.strip():
+            await message.answer(
+                "Не удалось распознать речь. Попробуйте ещё раз или отправьте текст.",
+            )
+            return
+
+        await process_text_turn(message, user_text)
 
     @router.message(F.photo)
     async def handle_photo(message: Message) -> None:

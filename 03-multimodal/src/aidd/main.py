@@ -10,6 +10,7 @@ from aidd.config import Config
 from aidd.dialog_store import DialogStore
 from aidd.handlers import register_handlers
 from aidd.llm_client import LLMClient
+from aidd.stt_client import SttClient
 from aidd.transaction_store import TransactionStore
 
 
@@ -35,8 +36,9 @@ async def main() -> None:
     llm = LLMClient(config)
     store = DialogStore(config.max_history_messages)
     tx_store = TransactionStore()
+    stt = SttClient(config.stt_base_url) if config.stt_base_url else None
     router = Router()
-    register_handlers(router, llm, store, tx_store)
+    register_handlers(router, llm, store, tx_store, stt=stt)
 
     dp = Dispatcher()
     dp.include_router(router)
