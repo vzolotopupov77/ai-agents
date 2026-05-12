@@ -15,7 +15,7 @@
 | 7 | Structured output: извлечение транзакций из текста | ✅ Готово | 2026-05-10: **агент** — `uv run python -m compileall src/aidd`; правки после прогона: JSON через `response_format: json_object` + разбор вручную (OpenRouter не всегда совместим с `beta.parse`); защита от пустого/`None` `choices`; суффикс промпта для неясных сумм; подтверждение записи из `format_transaction_confirmation`; в `.env.example` снижен `LLM_TEMPERATURE`, список категорий в `SYSTEM_PROMPT`. **Пользователь** — Telegram: сценарий с записью траты/дохода и проверка `/report`; сценарий без операции (совет без записи); граничные фразы; найденные ошибки устранены в коде и перепроверены |
 | 8 | VLM: обработка фото чеков | ✅ Готово | 2026-05-11: **агент** — `VLM_MODEL` в `Config`, `LLMClient.extract_from_image`, `F.photo` в [`handlers.py`](../src/aidd/handlers.py), `.env.example`; `compileall`. **Пользователь** — Telegram: фото чека → подтверждение записи и учёт в `/report`; неуспешные кейсы — нейтральный ответ без поломки диалога |
 | 9 | Переключение backend: OpenRouter ↔ Ollama через `.env` | ✅ Готово | 2026-05-11: **агент** — `LLM_API_KEY` / `LLM_BASE_URL` в [`config.py`](../src/aidd/config.py), [`README`](../README.md), [`.env.example`](../.env.example); notebook под те же имена; последующие правки совместимости: [`handlers`](../src/aidd/handlers.py) (пустой `reply` при записи), [`transaction_extract`](../src/aidd/transaction_extract.py) (`reply` null, алиас `time`, дефолт `tx_type`), [`llm_client`](../src/aidd/llm_client.py) (пустой/битый JSON OpenRouter/Ollama: санитизация, retry без `json_object`, парсинг `{…}`); `compileall`. **Пользователь** — сценарий **A** (OpenRouter): текст, учёт, после фиксов стабильно; сценарий **B** (Ollama): текст **без** VLM/фото (явное ограничение); **Docker**: сборка и запуск с `.env`, сценарий ок |
-| 10 | Голосовые сообщения: GigaAM-v3 STT-микросервис | ✅ Готово | 2026-05-12: **агент** — каталог [`stt_service/`](../stt_service/README.md) (FastAPI, `v3_e2e_ctc`, GigaAM с GitHub + PyTorch cu124 + ffmpeg на GPU-сервере), [`stt_client.py`](../src/aidd/stt_client.py), [`config.py`](../src/aidd/config.py) `STT_BASE_URL`, [`handlers.py`](../src/aidd/handlers.py) `F.voice`, [`main.py`](../src/aidd/main.py), `.env.example`, `httpx`; `compileall`; деплой на `195.209.210.184`, `curl /health` → `{"status":"ok"}`. **Пользователь** — голос в Telegram и сценарии без `STT_BASE_URL` не зафиксированы |
+| 10 | Голосовые сообщения: GigaAM-v3 STT-микросервис | ✅ Готово | 2026-05-12: **агент** — каталог [`stt_service/`](../stt_service/README.md) (FastAPI, `v3_e2e_ctc`, GigaAM с GitHub + PyTorch cu124 + ffmpeg на GPU-сервере), [`stt_client.py`](../src/aidd/stt_client.py), [`config.py`](../src/aidd/config.py) `STT_BASE_URL`, [`handlers.py`](../src/aidd/handlers.py) `F.voice`, [`main.py`](../src/aidd/main.py), `.env.example`, `httpx`; `compileall`; деплой на `195.209.210.184`, `curl /health` → `{"status":"ok"}`; фикс `TranscriptionResult.text`. **Пользователь** — голосовое на русском → запись в учёт; без `STT_BASE_URL` → нейтральный отказ; недоступный STT → нейтральный ответ без падения бота |
 
 **Статусы (для копирования в ячейку):**
 
@@ -227,13 +227,13 @@
 **Самопроверка**
 
 - [x] `compileall src/aidd` — без ошибок.
-- [ ] При `STT_BASE_URL` не задан — голосовое сообщение отклоняется с понятным текстом, бот не падает.
+- [x] При `STT_BASE_URL` не задан — голосовое сообщение отклоняется с понятным текстом, бот не падает.
 - [x] Текстовые сообщения и фото работают без изменений.
 
 **Пользователь**
 
-- [ ] Голосовое сообщение на русском → транскрибированный текст попадает в финансовый советник → при наличии операции — запись в учёт.
-- [ ] При недоступном STT-сервисе — нейтральный ответ, бот продолжает работать.
+- [x] Голосовое сообщение на русском → транскрибированный текст попадает в финансовый советник → при наличии операции — запись в учёт.
+- [x] При недоступном STT-сервисе — нейтральный ответ, бот продолжает работать.
 
 ---
 
