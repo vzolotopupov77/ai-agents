@@ -1,0 +1,29 @@
+Развиваем проект.
+Я делаю RAG-ассистента на базе LangChain, который работает через Telegram-бота, ведёт диалог с пользователем и отвечает на вопросы через RAG.
+
+Функциональные требования:
+
+Индексация
+- /index запускает полную переиндексацию.
+- При старте бота тоже идёт переиндексация.
+- Данные в data/: PDF (ouk_potrebitelskiy_kredit_lph.pdf, usl_r_vkladov.pdf) и sberbank_help_documents.json.
+- Векторное хранилище — InMemoryVectorStore.
+- /index_status показывает статус (число чанков).
+
+Диалог
+- Перед поиском делаем query transformation с учётом истории.
+- Из ретривера берём топ-K чанков (RETRIEVER_K из .env).
+- LLM отвечает на основе истории и контекста.
+- История — в формате LangChain messages (HumanMessage/AIMessage/SystemMessage).
+
+Реализация
+- Референс пайплайна: ноутбук naive-rag.ipynb, финальная цепочка rag_query_transform_chain.
+- Провайдер OpenRouter (OPENAI_BASE_URL=https://openrouter.ai/api/v1), модели в .env.
+- Python, uv, make, async aiogram, polling.
+
+Задачи:
+1) Обновить docs/idea.md и docs/vision.md под эти требования.
+2) После согласованного vision.md — обновить .cursor/rules/conventions.mdc по методологии ДЗ-2 (правила должны соответствовать новому vision, со ссылкой на него, без дублирования).
+3) В docs/tasklist.md существующие итерации перенести в завершённый Спринт 1, добавить новый Спринт 2 — итерации по реализации RAG.
+
+KISS, YAGNI, без оверинжиниринга.
