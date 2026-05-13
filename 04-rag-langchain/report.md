@@ -166,6 +166,14 @@ vector_store = create_vector_store(all_chunks)  # итого ~544 чанка
 
 ---
 
+## Ссылки
+
+- [README.md](README.md) — запуск, конфигурация, схемы потоков данных
+- [docs/tasklist.md](docs/tasklist.md) — план разработки и детальные результаты экспериментов
+- [docs/vision.md](docs/vision.md) — техническое видение и архитектура проекта
+
+---
+
 ## Структура репозитория
 
 ```

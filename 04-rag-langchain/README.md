@@ -187,21 +187,32 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 
 ### Как работает RAG
 
-1. **Индексация** (при старте):
-   ```
-   PDF + JSON FAQ → Разбиение на чанки (800/100) → Создание эмбеддингов → InMemoryVectorStore
-   ```
+#### Индексация (при старте бота)
 
-2. **Обработка вопроса**:
-   ```
-   Вопрос пользователя → Query Transformation (с учетом истории) →
-   → Поиск релевантных чанков (k=3) → Генерация ответа с контекстом
-   ```
+```mermaid
+flowchart TD
+    pdfFiles["data/*.pdf\n(2 документа)"] --> pdfLoader["load_pdf_documents()\nPyPDFLoader"]
+    jsonFile["data/sberbank_help_documents.json\n(212 Q&A)"] --> jsonLoader["load_json_documents()\njson.load → Document"]
+    pdfLoader --> splitter["split_documents()\nRecursiveCharacterTextSplitter\nchunk_size=800, overlap=100"]
+    jsonLoader --> splitter
+    splitter --> allChunks["all_chunks (~544)"]
+    allChunks --> embeddings["OpenAIEmbeddings\nEMBEDDING_MODEL из .env"]
+    embeddings --> vectorStore["InMemoryVectorStore"]
+```
 
-3. **Контекстный диалог**:
-   - История сохраняется в формате LangChain Messages
-   - Уточняющие вопросы понимаются через query transformation
-   - LLM получает и историю, и найденный контекст из документов
+#### Обработка вопроса пользователя
+
+```mermaid
+flowchart TD
+    user["Пользователь\n(Telegram)"] -->|"текстовое сообщение"| handler["handlers.py\nдобавить в историю"]
+    handler --> queryTransform["Query Transformation\nLLM переформулирует запрос\nс учётом истории"]
+    queryTransform --> retriever["Retriever\nsimilarity_search, k=3"]
+    retriever --> vectorStore["InMemoryVectorStore"]
+    vectorStore -->|"top-3 чанка"| formatChunks["format_chunks()\nфрагменты + метаданные источника"]
+    formatChunks --> llm["LLM\nистория + контекст → ответ"]
+    llm -->|"ответ"| handler2["handlers.py\nсохранить в историю"]
+    handler2 -->|"ответ"| user
+```
 
 ### Технологический стек
 
@@ -294,6 +305,10 @@ make run        # Запустить бота
 - Возможно, вопросы не связаны с содержимым документов
 - Попробуйте задать более конкретные вопросы по тематике документов
 - Проверьте, что индексация прошла успешно (`/index_status`)
+
+## 📄 Отчёт по домашнему заданию
+
+Подробный отчёт об экспериментах (чанкинг, JSON-индексация, сравнение эмбеддингов) — в файле [report.md](report.md).
 
 ## 📝 Лицензия
 
