@@ -5,7 +5,7 @@ Telegram-бот с RAG (Retrieval-Augmented Generation) для ответов н
 ## ✨ Возможности
 
 - 🤖 **RAG на базе LangChain** - ответы на основе реальных документов
-- 📚 **Индексация PDF** - автоматическая обработка документов при старте
+- 📚 **Индексация PDF + JSON** - автоматическая обработка PDF-документов и JSON FAQ при старте
 - 💬 **Контекстный диалог** - понимание уточняющих вопросов
 - 🔍 **Query Transformation** - улучшение поисковых запросов с учетом истории
 - ⚡ **Асинхронная обработка** - поддержка множества пользователей одновременно
@@ -59,7 +59,7 @@ Telegram-бот с RAG (Retrieval-Augmented Generation) для ответов н
 1. Зарегистрируйтесь на [OpenRouter.ai](https://openrouter.ai/)
 2. Перейдите в раздел API Keys и создайте ключ
 
-Для экспериментов с эмбеддингами можно дополнительно использовать локальный **Ollama** (потребуются правки кода в `create_vector_store` и зависимость `langchain-ollama`) — см. домашнее задание модуля 4.
+Бот поддерживает любую OpenAI-совместимую модель эмбеддингов OpenRouter. Проверенные варианты: `openai/text-embedding-3-large` (baseline), `baai/bge-m3`, `qwen/qwen3-embedding-8b` — меняется только `EMBEDDING_MODEL` в `.env`.
 
 ### Пример конфигурации (.env)
 
@@ -108,17 +108,18 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 ## 📚 Добавление документов
 
 1. Поместите PDF файлы в директорию `data/`
-2. Перезапустите бота (документы проиндексируются автоматически)
+2. Убедитесь, что в `data/` лежит `sberbank_help_documents.json` (FAQ по картам — уже включён)
+3. Перезапустите бота (документы проиндексируются автоматически)
    
    ИЛИ
    
-3. Используйте команду `/index` в Telegram для переиндексации
+4. Используйте команду `/index` в Telegram для переиндексации без перезапуска
 
-**Примечание:** Бот автоматически:
-- Загружает все PDF из `data/`
-- Разбивает на чанки по 500 символов
+**Примечание:** Бот автоматически через `indexer_with_json.py`:
+- Загружает все PDF из `data/` и JSON FAQ
+- Разбивает на чанки (`chunk_size=800`, `chunk_overlap=100`)
 - Создает векторные эмбеддинги
-- Сохраняет в памяти для быстрого поиска
+- Сохраняет в памяти для быстрого поиска (~544 чанка для текущего набора данных)
 
 ## 💬 Использование
 
@@ -161,15 +162,21 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 
 ```
 ├── src/
-│   ├── bot.py          # Точка входа, инициализация, логирование
-│   ├── config.py       # Загрузка конфигурации из .env
-│   ├── handlers.py     # Обработчики команд и сообщений
-│   ├── indexer.py      # Загрузка и индексация PDF
-│   └── rag.py          # RAG-логика: retriever, цепочки, промпты
+│   ├── bot.py                  # Точка входа, инициализация, логирование
+│   ├── config.py               # Загрузка конфигурации из .env
+│   ├── handlers.py             # Обработчики команд и сообщений
+│   ├── indexer.py              # Базовая индексация PDF
+│   ├── indexer_with_json.py    # Объединённая индексация PDF + JSON (активный)
+│   └── rag.py                  # RAG-логика: retriever, цепочки, промпты
 ├── prompts/
 │   ├── conversation_system.txt    # Промпт для диалога
 │   └── query_transform.txt        # Промпт для трансформации запросов
-├── data/               # PDF документы для индексации
+├── data/
+│   ├── ouk_potrebitelskiy_kredit_lph.pdf
+│   ├── usl_r_vkladov.pdf
+│   └── sberbank_help_documents.json   # FAQ по картам (212 Q&A)
+├── scripts/
+│   └── hw3_compare_embeddings.py      # Сравнение моделей эмбеддингов
 ├── logs/               # Логи работы бота
 ├── .env                # Конфигурация (не в git)
 ├── env.example         # Пример конфигурации
@@ -182,7 +189,7 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 
 1. **Индексация** (при старте):
    ```
-   PDF документы → Разбиение на чанки → Создание эмбеддингов → Векторное хранилище (в памяти)
+   PDF + JSON FAQ → Разбиение на чанки (800/100) → Создание эмбеддингов → InMemoryVectorStore
    ```
 
 2. **Обработка вопроса**:
@@ -248,19 +255,21 @@ make run        # Запустить бота
 **Пример лога:**
 ```
 2025-11-07 18:32:37,399 - __main__ - INFO - Starting indexing...
-2025-11-07 18:32:38,384 - indexer - INFO - Split into 377 chunks
-2025-11-07 18:32:41,314 - indexer - INFO - Created vector store with 377 chunks
-2025-11-07 18:32:41,314 - __main__ - INFO - Indexing completed successfully
+2025-11-07 18:32:38,100 - indexer_with_json - INFO - Loaded 212 JSON documents from sberbank_help_documents.json
+2025-11-07 18:32:38,384 - indexer - INFO - Split into 544 chunks
+2025-11-07 18:32:41,314 - indexer - INFO - Created vector store with 544 chunks
+2025-11-07 18:32:41,314 - __main__ - INFO - Indexing completed successfully: 544 documents indexed
 ```
 
 ### Настройка параметров RAG
 
-В `src/indexer.py` и `src/bot.py` можно настроить:
+В `src/indexer.py` и `.env` можно настроить:
 
-- **Размер чанков**: `chunk_size=500` (в RecursiveCharacterTextSplitter)
-- **Перекрытие чанков**: `chunk_overlap=50`
-- **Количество чанков для поиска**: `k=3` (в retriever)
-- **Temperature** для LLM: `temperature=0.9` (в rag.py)
+- **Размер чанков**: `chunk_size=800` в `RecursiveCharacterTextSplitter` (проверено в HW-1: оптимум)
+- **Перекрытие чанков**: `chunk_overlap=100`
+- **Количество чанков для поиска**: `RETRIEVER_K=3` в `.env`
+- **Temperature** для LLM: `temperature=0.9` в `rag.py`
+- **Модель эмбеддингов**: `EMBEDDING_MODEL` в `.env` (см. варианты в `env.example`)
 
 ## ⚠️ Ограничения
 

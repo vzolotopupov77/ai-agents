@@ -30,8 +30,12 @@ def load_pdf_documents(data_dir: str) -> list:
 def split_documents(pages: list) -> list:
     """Разбиение документов на чанки"""
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50
+#        chunk_size=1500,
+#        chunk_overlap=150
+        chunk_size=800,
+        chunk_overlap=100,
+        separators=["\n\n\n", "\n\n", "\n", ". ", " ", ""],
+        keep_separator=True,
     )
     chunks = text_splitter.split_documents(pages)
     logger.info(f"Split into {len(chunks)} chunks")

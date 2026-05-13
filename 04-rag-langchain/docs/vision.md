@@ -33,22 +33,29 @@
 ```
 /
 ├── src/
-│   ├── bot.py          # Основной файл бота, инициализация aiogram
-│   ├── handlers.py     # Обработчики команд и сообщений Telegram
-│   ├── rag.py          # RAG-логика: retriever, цепочки, query transformation
-│   ├── indexer.py      # Индексация: загрузка PDF, splitting, векторное хранилище
-│   └── config.py       # Загрузка конфигурации из .env
-├── data/               # PDF для индексации; в ДЗ модуля 4 — также JSON (см. idea.md)
-├── .env                # Переменные окружения (токены, настройки)
-├── .env.example        # Пример конфигурации
-├── pyproject.toml      # Конфигурация проекта для uv
-├── Makefile            # Команды для запуска и управления
-└── README.md           # Документация по запуску
+│   ├── bot.py                  # Основной файл бота, инициализация aiogram
+│   ├── handlers.py             # Обработчики команд и сообщений Telegram
+│   ├── rag.py                  # RAG-логика: retriever, цепочки, query transformation
+│   ├── indexer.py              # Индексация PDF: загрузка, splitting, векторное хранилище
+│   ├── indexer_with_json.py    # Расширение: объединённая индексация PDF + JSON FAQ
+│   └── config.py               # Загрузка конфигурации из .env
+├── data/
+│   ├── ouk_potrebitelskiy_kredit_lph.pdf   # Общие условия потребительского кредита
+│   ├── usl_r_vkladov.pdf                   # Условия по вкладам
+│   └── sberbank_help_documents.json        # FAQ по картам (212 Q&A)
+├── scripts/
+│   └── hw3_compare_embeddings.py           # Сравнение retrieval по трём моделям эмбеддингов
+├── prompts/                    # Промпты для диалога и query transformation
+├── .env                        # Переменные окружения (токены, настройки)
+├── env.example                 # Пример конфигурации
+├── pyproject.toml              # Конфигурация проекта для uv
+├── Makefile                    # Команды для запуска и управления
+└── README.md                   # Документация по запуску
 ```
 
 **Принцип:** Простая структура — Python-файлы в одной папке `src/`. Никаких пакетов, подпакетов, сложной иерархии.
 
-**Данные:** в учебном эталоне в `data/` лежат два PDF (`ouk_potrebitelskiy_kredit_lph.pdf`, `usl_r_vkladov.pdf`) и файл `sberbank_help_documents.json` для заданий на расширение индекса (HW Спринт в tasklist).
+**Данные:** в `data/` лежат два PDF и файл `sberbank_help_documents.json` (212 Q&A по картам). Активный пайплайн (`indexer_with_json.py`) индексирует оба источника в одном векторном хранилище (~544 чанка).
 
 ## Архитектура проекта
 
@@ -68,12 +75,16 @@
    - Обработчик всех текстовых сообщений → вызов RAG → сохранение ответа в историю
    - Хранит историю диалогов в памяти: `dict[int, list]` (chat_id → список сообщений)
 
-3. **indexer.py** - индексация документов
-   - `load_pdf_documents(data_dir)` - загрузка PDF через PyPDFLoader
-   - `split_documents(pages)` - разбиение на чанки через RecursiveCharacterTextSplitter
-   - `create_vector_store(chunks)` - создание InMemoryVectorStore с эмбеддингами
-   - `reindex_all()` - полная переиндексация с нуля
-   - Глобальная переменная `vector_store` для хранения векторного хранилища
+3. **indexer.py** - базовая индексация PDF
+   - `load_pdf_documents(data_dir)` — загрузка PDF через PyPDFLoader
+   - `split_documents(pages)` — разбиение на чанки: `chunk_size=800`, `chunk_overlap=100`, `RecursiveCharacterTextSplitter`
+   - `create_vector_store(chunks)` — создание `InMemoryVectorStore` с `OpenAIEmbeddings`; модель из `config.EMBEDDING_MODEL`
+   - `reindex_all()` — полная переиндексация только PDF (не используется напрямую ботом)
+
+3a. **indexer_with_json.py** - объединённая индексация PDF + JSON
+   - `load_json_documents(data_dir)` — читает `sberbank_help_documents.json`, каждая Q&A → `Document` с метаданными `source`, `question`, `category`
+   - `reindex_all()` — вызывает `load_pdf_documents` + `split_documents` из `indexer.py`, затем `load_json_documents` + `split_documents`, один общий `create_vector_store(all_chunks)`
+   - **Именно этот модуль подключён к боту**: `import indexer_with_json as indexer`
 
 4. **rag.py** - RAG-логика
    - `format_chunks(chunks)` - форматирование чанков в строку
@@ -102,15 +113,17 @@ LLM → rag.py → handlers.py (сохранить ответ в историю)
 
 Глобальный словарь в `handlers.py`:
 ```python
-chat_conversations: dict[int, list[dict]] = {}
+chat_conversations: dict[int, list] = {}
 ```
 
-**Структура истории диалога:**
+**Структура истории диалога** (LangChain Messages):
 ```python
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
 chat_conversations[chat_id] = [
-    {"role": "system", "content": "системный промпт"},
-    {"role": "user", "content": "сообщение пользователя"},
-    {"role": "assistant", "content": "ответ LLM"},
+    SystemMessage(content="системный промпт"),
+    HumanMessage(content="сообщение пользователя"),
+    AIMessage(content="ответ LLM"),
     ...
 ]
 ```
@@ -125,15 +138,16 @@ chat_conversations[chat_id] = [
 
 ## Работа с LLM
 
-**Используемая библиотека:** `openai` (официальный Python client, асинхронная версия)
+**Используемая библиотека:** `langchain-openai` (`ChatOpenAI` — интегрирован в LangChain-цепочки)
 
-**Настройка:**
+**Настройка (ленивая инициализация в `rag.py`):**
 ```python
-from openai import AsyncOpenAI
+from langchain_openai import ChatOpenAI
 
-client = AsyncOpenAI(
-    api_key=config.OPENAI_API_KEY,
-    base_url=config.OPENAI_BASE_URL  # https://openrouter.ai/api/v1
+llm = ChatOpenAI(
+    model=config.MODEL,           # openai/gpt-oss-20b:free
+    temperature=0.9,
+    # base_url и api_key подхватываются из переменных окружения OPENAI_BASE_URL / OPENAI_API_KEY
 )
 ```
 
@@ -178,26 +192,19 @@ client = AsyncOpenAI(
 **Файл .env** (не коммитится в git):
 ```bash
 TELEGRAM_TOKEN=your_telegram_bot_token
-OPENAI_API_KEY=your_openrouter_api_key
+OPENAI_API_KEY=sk-or-v1-...
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
 MODEL=openai/gpt-oss-20b:free
 MODEL_QUERY_TRANSFORM=openai/gpt-oss-20b:free
-EMBEDDING_MODEL=text-embedding-3-large
+# Варианты: openai/text-embedding-3-large | baai/bge-m3 | qwen/qwen3-embedding-8b
+EMBEDDING_MODEL=openai/text-embedding-3-large
 DATA_DIR=data
+PROMPTS_DIR=prompts
+RETRIEVER_K=3
 SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий на вопросы по документам.
 ```
 
-**Файл .env.example** (коммитится):
-```bash
-TELEGRAM_TOKEN=
-OPENAI_API_KEY=
-OPENAI_BASE_URL=https://openrouter.ai/api/v1
-MODEL=openai/gpt-oss-20b:free
-MODEL_QUERY_TRANSFORM=openai/gpt-oss-20b:free
-EMBEDDING_MODEL=text-embedding-3-large
-DATA_DIR=data
-SYSTEM_PROMPT=Ты ассистент, отвечающий на вопросы по документам.
-```
+**Файл env.example** (коммитится — с комментариями по вариантам `EMBEDDING_MODEL`).
 
 **config.py:**
 ```python
@@ -249,12 +256,11 @@ logger = logging.getLogger(__name__)
 - Детальные трейсы успешных операций
 - Метрики, аналитика
 
-**Вывод:** Только в stdout/stderr (консоль)
+**Вывод:** stdout/stderr (консоль) + файл `logs/bot.log` (UTF-8, без ротации).
 
 **Принципы:**
 - Без внешних библиотек (structlog и т.п.)
-- Без файлов, ротации логов
-- Без отправки в внешние системы
+- Без ротации, без внешних систем
 - Простой текстовый формат
 
 

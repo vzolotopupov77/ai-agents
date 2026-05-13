@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from config import config
-import indexer
+import indexer_with_json as indexer
 import rag
 
 logger = logging.getLogger(__name__)

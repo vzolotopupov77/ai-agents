@@ -4,7 +4,7 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher
 from handlers import router
 from config import config
-import indexer
+import indexer_with_json as indexer
 import rag
 
 # Создаем директорию для логов
