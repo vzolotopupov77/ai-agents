@@ -1,0 +1,51 @@
+Развиваем RAG-ассистент: добавляем мониторинг и оценку качества.
+
+## Что строим
+
+1. **Отображение источников** — бот показывает список документов и страниц,
+   использованных для ответа. Включается через SHOW_SOURCES=true в .env.
+   Форматирование: "📚 Источники: filename.pdf (стр. 1, 3, 5)"
+   Требуется рефакторинг RAG-цепочки для возврата документов вместе с ответом.
+
+2. **LangSmith трейсинг** — автоматический трейсинг всех RAG-запросов
+   через переменные окружения LANGSMITH_* в .env. Код менять не нужно —
+   LangChain подхватывает автоматически.
+
+3. **Синтез датасетов** — модуль dataset_synthesizer.py:
+   - Выборка по 2 чанка из каждого PDF в data/
+   - LLM генерирует вопрос и ответ по каждому чанку
+   - Загрузка готовых Q&A из JSON-файлов (если есть)
+   - Сохранение в datasets/05-rag-qa-dataset.json
+   - Загрузка в LangSmith с проверкой на дубликаты
+   - Команды make dataset и make dataset-upload
+
+4. **Evaluation через RAGAS** — модуль evaluation.py:
+   - Команда бота /evaluate_dataset запускает полный цикл
+   - 6 метрик: faithfulness, answer_relevancy, answer_correctness,
+     answer_similarity, context_recall, context_precision
+   - Результаты загружаются в LangSmith как feedback
+   - Референс: @rag-evaluation-practice.ipynb (раздел 5)
+
+## Данные и референсы
+
+- Документы: скопируй data/ из llmstart-ai-agents/05-monitoring-qa/live/data/
+- Референс: @rag-evaluation-practice.ipynb
+- Провайдер: OpenRouter (OPENAI_BASE_URL=https://openrouter.ai/api/v1)
+
+## Стек
+
+Python + uv + make + async aiogram + polling.
+Новые зависимости: langsmith, ragas>=0.2.0, datasets.
+Модели RAGAS задаются через RAGAS_LLM_MODEL и RAGAS_EMBEDDING_MODEL в .env.
+
+## Задачи по документации (строго в таком порядке)
+
+1. Обнови docs/idea.md и docs/vision.md — добавь 1-2 предложения про
+   мониторинг, RAGAS и синтез датасетов как новые возможности проекта.
+2. Синхронизируй .cursor/rules/conventions.mdc: правила соответствуют
+   новому vision, ссылаются на него, не дублируют его содержание.
+3. Обнови docs/tasklist.md: перенеси текущие итерации в завершённый спринт,
+   создай новый спринт с итерациями для добавления функционала мониторинга.
+   Имена итераций — с префиксом "ДЗ-5:".
+
+KISS, YAGNI, без оверинжиниринга.
