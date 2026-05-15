@@ -1,7 +1,8 @@
 import logging
 from typing import Optional, Dict, Any
 from langsmith import Client
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
+from indexer import OpenRouterEmbeddings
 from datasets import Dataset
 from ragas import evaluate
 from ragas.metrics import (
@@ -38,7 +39,11 @@ def init_ragas_metrics():
     
     # Настройка LLM и embeddings для RAGAS (фиксированные модели для единообразной оценки)
     langchain_llm = ChatOpenAI(model=config.RAGAS_LLM_MODEL, temperature=0)
-    langchain_embeddings = OpenAIEmbeddings(model=config.RAGAS_EMBEDDING_MODEL)
+    langchain_embeddings = OpenRouterEmbeddings(
+        model=config.RAGAS_EMBEDDING_MODEL,
+        api_key=config.OPENAI_API_KEY,
+        base_url=config.OPENAI_BASE_URL,
+    )
     
     # Создаем метрики
     metrics = [
@@ -62,9 +67,10 @@ def init_ragas_metrics():
     
     # Настройки для выполнения
     run_config = RunConfig(
-        max_workers=4,
-        max_wait=180,
-        max_retries=3
+        max_workers=1,
+        max_wait=600,
+        max_retries=5,
+        timeout=180,
     )
     
     _ragas_metrics = metrics
@@ -173,7 +179,13 @@ def evaluate_dataset(dataset_name: Optional[str] = None) -> Dict[str, Any]:
         answer = run.outputs.get("answer", "")
         documents = run.outputs.get("documents", [])
         contexts = [doc.page_content if hasattr(doc, 'page_content') else str(doc) for doc in documents]
-        ground_truth = example.outputs.get("answer", "") if example else ""
+        # Поле может называться "ground_truth" или "answer" в зависимости от того,
+        # как датасет был загружен в LangSmith
+        ground_truth = (
+            example.outputs.get("ground_truth")
+            or example.outputs.get("answer")
+            or ""
+        ) if example else ""
         
         questions.append(question)
         answers.append(answer)
