@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from functools import partial
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -172,8 +174,9 @@ async def cmd_evaluate_dataset(message: Message):
         )
     
     try:
-        # Запускаем evaluation
-        result = evaluation.evaluate_dataset(dataset_name)
+        # Запускаем evaluation в thread executor, чтобы не блокировать event loop aiogram
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, partial(evaluation.evaluate_dataset, dataset_name))
         
         # Формируем отчет
         metrics = result["metrics"]

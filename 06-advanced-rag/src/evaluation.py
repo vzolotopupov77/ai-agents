@@ -62,7 +62,7 @@ def init_ragas_metrics():
     logger.info("Initializing RAGAS metrics...")
     
     # Настройка LLM и embeddings для RAGAS (фиксированные модели для единообразной оценки)
-    langchain_llm = ChatOpenAI(model=config.RAGAS_LLM_MODEL, temperature=0)
+    langchain_llm = ChatOpenAI(model=config.RAGAS_LLM_MODEL, temperature=0, max_retries=10, timeout=300)
     langchain_embeddings = create_ragas_embeddings()
     
     # Создаем метрики
@@ -89,9 +89,10 @@ def init_ragas_metrics():
     
     # Настройки для выполнения
     run_config = RunConfig(
-        max_workers=4,
-        max_wait=180,
-        max_retries=3
+        max_workers=2,
+        max_wait=600,
+        max_retries=5,
+        seed=42,
     )
     
     _ragas_metrics = metrics
@@ -205,7 +206,7 @@ def evaluate_dataset(dataset_name: Optional[str] = None) -> Dict[str, Any]:
         # Получаем данные
         question = run.inputs.get("question", "")
         answer = run.outputs.get("answer", "")
-        documents = run.outputs.get("documents", [])
+        documents = run.outputs.get("documents", [])[:3]  # top-3 reduces LLM calls in RAGAS
         contexts = [doc.page_content if hasattr(doc, 'page_content') else str(doc) for doc in documents]
         ground_truth = example.outputs.get("answer", "") if example else ""
         

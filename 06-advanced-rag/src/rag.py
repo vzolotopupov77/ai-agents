@@ -229,7 +229,9 @@ def _get_llm_query_transform():
     if _llm_query_transform is None:
         _llm_query_transform = ChatOpenAI(
             model=config.MODEL_QUERY_TRANSFORM,
-            temperature=0.4
+            temperature=0.4,
+            max_retries=10,
+            timeout=300,
         )
         logger.info(f"Query transform LLM initialized: {config.MODEL_QUERY_TRANSFORM}")
     return _llm_query_transform
@@ -240,7 +242,9 @@ def _get_llm():
     if _llm is None:
         _llm = ChatOpenAI(
             model=config.MODEL,
-            temperature=0.9
+            temperature=0.9,
+            max_retries=10,
+            timeout=300,
         )
         logger.info(f"Main LLM initialized: {config.MODEL}")
     return _llm
