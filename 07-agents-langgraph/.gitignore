@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+*.log
+logs/*
+!logs/.gitkeep
+datasets/*.json
+!datasets/.gitkeep
+
