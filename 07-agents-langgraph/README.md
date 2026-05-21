@@ -1,15 +1,16 @@
 # ReAct Agent с Advanced Hybrid RAG
 
-Telegram-бот на базе ReAct-агента (Reason + Act) с инструментом `rag_search` поверх продвинутого Hybrid RAG. Агент сам решает, когда искать в документах банка, а когда отвечать напрямую.
+Telegram-бот на базе ReAct-агента (Reason + Act) с инструментами `rag_search` и `currency_converter` поверх продвинутого Hybrid RAG. Агент сам решает, когда искать в документах банка, когда считать курс валют, а когда отвечать напрямую.
 
 ## ✨ Возможности
 
 ### 🤖 ReAct Agent (автономный ИИ)
 
-- 🧠 **Самостоятельное принятие решений** — агент сам выбирает, когда вызывать `rag_search`.
+- 🧠 **Самостоятельное принятие решений** — агент сам выбирает, когда вызывать `rag_search`, когда `currency_converter`.
 - 🔄 **ReAct цикл:** Reason → Act → Observe → Respond.
 - 💾 **MemorySaver** — независимая история диалога для каждого `chat_id`.
-- 🎯 **Умная стратегия:** «привет/спасибо» — без поиска; «какой процент по вкладу» — через `rag_search`.
+- 🎯 **Умная стратегия:** «привет» — без инструментов; продуктовые вопросы — `rag_search`; курс и конвертация валют — `currency_converter`.
+- 💱 **Курсы:** приоритет XML ЦБ РФ; при недоступности `cbr.ru` — запасной JSON (`EXCHANGE_FALLBACK_URL`), в ответе явно указано, что это не официальный курс ЦБ.
 - 📝 **Системный промпт в файле** `prompts/agent_system.txt` — редактируется без правки кода.
 
 ### 🔍 Advanced Hybrid RAG
@@ -29,7 +30,7 @@ Telegram-бот на базе ReAct-агента (Reason + Act) с инстру�
 
 ### 📊 Мониторинг и Quality Assurance
 
-- **LangSmith трейсинг** — детальные traces каждого ReAct-шага и каждого вызова `rag_search`.
+- **LangSmith трейсинг** — traces каждого ReAct-шага и вызовов `rag_search` / `currency_converter`.
 - **Синтез датасетов** — автоматическая генерация Q&A для evaluation.
 - **RAGAS Evaluation** — 6 метрик качества прямо из Telegram-команды.
 - **Асинхронная обработка** — много пользователей одновременно.
@@ -126,6 +127,12 @@ HUGGINGFACE_DEVICE=cpu
    срок от 3 месяцев до 5 лет, ставка 12.9–19.9% годовых.
 ```
 
+**Вопрос с вызовом `currency_converter`:**
+```
+👤 Сколько 100 долларов в рублях?
+🤖 Ответ с суммой и пояснением курса (ЦБ РФ или запасной API — см. текст ответа бота).
+```
+
 **Уточнение в контексте диалога:**
 ```
 👤 Какие вклады есть?
@@ -147,14 +154,14 @@ HUGGINGFACE_DEVICE=cpu
 │   ├── indexer.py              # Загрузка PDF/JSON, чанки, vector store
 │   ├── rag.py                  # Retriever (semantic/hybrid/hybrid_reranker), reranking
 │   ├── agent.py                # ReAct-агент через create_agent() из LangChain 1.0
-│   ├── tools.py                # @tool rag_search для агента
+│   ├── tools.py                # @tool rag_search, currency_converter
 │   ├── dataset_synthesizer.py  # Синтез тестовых датасетов и загрузка в LangSmith
 │   └── evaluation.py           # RAGAS evaluation с LangSmith feedback
 ├── prompts/
-│   └── agent_system.txt        # Системный промпт агента (когда звать rag_search)
+│   └── agent_system.txt        # Системный промпт (rag_search и currency_converter)
 ├── data/                       # PDF + JSON документы
 ├── datasets/                   # Сгенерированные датасеты для evaluation
-├── docs/                       # idea.md, vision.md, tasklist.md, references/
+├── docs/                       # idea.md, vision.md, tasklist.md, dz7-iteration2.md, references/
 ├── env.example
 ├── Makefile
 ├── pyproject.toml
@@ -168,9 +175,8 @@ Telegram → handlers.py (HumanMessage) →
   agent.agent_answer(thread_id = chat_id) →
     bank_agent (LangChain 1.0 create_agent):
       1. Reason — анализирует вопрос
-      2. Act    — при необходимости вызывает rag_search(query)
-                  → rag.retrieve_documents() → semantic/hybrid/hybrid_reranker
-                  → JSON {"sources": [{"source", "page", "page_content"}]}
+      2. Act    — при необходимости `rag_search(query)` и/или `currency_converter(amount, from, to)`
+                  → RAG: JSON источников; курсы: ЦБ XML или запасной API → текст результата
       3. Respond — формирует финальный ответ
     MemorySaver сохраняет историю по chat_id
 → AIMessage → handlers.py → Telegram
@@ -267,14 +273,15 @@ Hybrid выдаёт топ-20, cross-encoder переранжирует и во�
 
 ### LangSmith трейсинг
 
-В `.env`:
+В `.env` (переменные LangChain SDK для трейсинга):
+
 ```bash
-LANGSMITH_API_KEY=lsv2_pt_...
-LANGSMITH_TRACING_V2=true
-LANGSMITH_PROJECT=07-react-agent
+LANGCHAIN_API_KEY=...
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_PROJECT=07-react-agent
 ```
 
-В UI LangSmith видно ReAct-цикл: рассуждение агента, вызов `rag_search`, найденные документы, финальный ответ.
+В UI LangSmith видно ReAct-цикл: рассуждение агента, вызовы `rag_search` и `currency_converter`, результаты инструментов, финальный ответ.
 
 ### Синтез датасета и evaluation
 
@@ -314,7 +321,7 @@ make dataset-upload  # загрузка датасета в LangSmith
 
 ### Редактирование промпта агента
 
-`prompts/agent_system.txt` определяет, когда агент должен звать `rag_search` (продуктовые вопросы), а когда отвечать напрямую (приветствия, уточнения в контексте).
+`prompts/agent_system.txt` задаёт, когда звать `rag_search` (продукты по документам), когда `currency_converter` (курсы и суммы в валюте), а когда отвечать без инструментов.
 
 ### Логи
 
@@ -325,10 +332,13 @@ make dataset-upload  # загрузка датасета в LangSmith
 - История диалога — только в памяти (теряется при рестарте).
 - Векторное хранилище — InMemoryVectorStore (переиндексация после рестарта).
 - Только текстовые сообщения.
-- Ответы — на основе документов в `data/`.
+- Ответы по продуктам — на основе документов в `data/`; курсы валют при недоступности ЦБ — ориентировочные (запасной API), не для официальных расчётов.
+- Бесплатные модели на OpenRouter могут отдавать HTTP 429 — см. `LLM_MAX_RETRIES`, смену `MODEL` или ключ провайдера.
 
 ## 🐛 Устранение неполадок
 
 - **Бот не отвечает по делу** → `/index_status`, проверьте, что PDF лежат в `data/`.
 - **Ошибка при индексации** → проверьте `OPENAI_API_KEY` и доступность `EMBEDDING_MODEL`.
 - **Агент всё время отвечает «не нашёл»** → проверьте, что вопросы в тематике загруженных документов.
+- **Не резолвится cbr.ru / конвертер без ЦБ** → запасной источник в `EXCHANGE_FALLBACK_URL`; при необходимости свой `CBR_XML_URL` или VPN/DNS.
+- **429 от OpenRouter на бесплатной модели** → пауза, `LLM_MAX_RETRIES`, другая `MODEL`, ключ на [integrations](https://openrouter.ai/settings/integrations).

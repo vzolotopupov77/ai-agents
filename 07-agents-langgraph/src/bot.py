@@ -46,6 +46,7 @@ async def main():
     # Логирование конфигурации
     logger.info("📋 Configuration:")
     logger.info(f"  Agent model: {config.MODEL}")
+    logger.info(f"  LLM max_retries: {config.LLM_MAX_RETRIES}, request_timeout: {config.LLM_REQUEST_TIMEOUT}s")
     logger.info(f"  Retrieval mode: {config.RETRIEVAL_MODE}")
     logger.info(f"  Embedding provider: {config.EMBEDDING_PROVIDER}")
     if config.EMBEDDING_PROVIDER == "openai":

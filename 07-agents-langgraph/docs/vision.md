@@ -35,7 +35,7 @@
 │   ├── bot.py                  # Точка входа: индексация → инициализация агента → polling
 │   ├── handlers.py             # Обработчики команд и сообщений
 │   ├── agent.py                # ReAct-агент через create_agent() (LangChain 1.0)
-│   ├── tools.py                # @tool rag_search для агента
+│   ├── tools.py                # @tool rag_search, currency_converter
 │   ├── rag.py                  # Retriever + reranking, retrieve_documents()
 │   ├── indexer.py              # Загрузка PDF/JSON, чанки, vector store
 │   ├── config.py               # Загрузка и валидация .env
@@ -45,7 +45,7 @@
 │   └── agent_system.txt        # Системный промпт агента
 ├── data/                       # PDF + JSON документы
 ├── datasets/                   # Сгенерированные датасеты для evaluation
-├── docs/                       # idea.md, vision.md, tasklist.md, adrs/
+├── docs/                       # idea.md, vision.md, tasklist.md, dz7-iteration2.md, adrs/
 ├── logs/                       # bot.log (не коммитится)
 ├── env.example                 # Пример конфигурации
 ├── pyproject.toml              # uv
@@ -68,14 +68,14 @@
    - Опционально дописывает источники (`SHOW_SOURCES`).
 
 3. **agent.py** — ReAct-агент.
-   - `create_bank_agent()` — `create_agent(model, tools=[rag_search], system_prompt, checkpointer=MemorySaver())`.
+   - `create_bank_agent()` — `create_agent(model, tools=[rag_search, currency_converter], system_prompt, checkpointer=MemorySaver())`.
    - `agent_answer(messages, chat_id)` — `bank_agent.stream(..., stream_mode="values")`, логирует каждый шаг.
    - `_extract_documents_from_current_request()` — собирает `documents` только из `ToolMessage` после последнего `HumanMessage` (важно для RAGAS).
    - Fallback на пустой ответ.
 
-4. **tools.py** — `@tool rag_search(query: str) -> str`.
-   - Вызывает `rag.retrieve_documents(query)`.
-   - Возвращает JSON `{"sources": [{source, page, page_content}]}` (`page` только для PDF, `ensure_ascii=False`).
+4. **tools.py** — инструменты агента.
+   - `@tool rag_search(query: str) -> str` — вызывает `rag.retrieve_documents(query)`, возвращает JSON `{"sources": [...]}`.
+   - `@tool currency_converter(amount, from_currency, to_currency) -> str` — курсы: сначала XML ЦБ РФ (`XML_daily.asp`, резервные URL и `CBR_XML_URL`), при ошибке — JSON с базой RUB (`EXCHANGE_FALLBACK_URL`). Кеш по календарному дню; в тексте ответа указан источник (ЦБ или «не официальный» запасной API).
 
 5. **rag.py** — Retriever и reranking.
    - `create_retriever()` — фабрика по `RETRIEVAL_MODE` (semantic / hybrid / hybrid_reranker).
@@ -103,10 +103,9 @@ Telegram → handlers.py (HumanMessage) →
 agent.agent_answer(thread_id = chat_id) →
 bank_agent (ReAct цикл):
     1. Reason — анализирует вопрос, контекст из MemorySaver
-    2. Act    — при необходимости rag_search(query)
-                → rag.retrieve_documents()
-                → semantic / hybrid / hybrid_reranker
-                → JSON {"sources": [...]} обратно агенту
+    2. Act    — при необходимости:
+                  • rag_search(query) → retrieve_documents() → semantic/hybrid/hybrid_reranker → JSON {"sources": [...]}
+                  • currency_converter(...) → ЦБ XML или запасной API → строка с суммой и пояснением источника
     3. Respond — финальный AIMessage
 → handlers.py → Telegram (+ опц. источники)
 ```
@@ -137,10 +136,11 @@ Telegram /evaluate_dataset → handlers.py → evaluation.evaluate_dataset:
 
 **Провайдер:** OpenRouter (`OPENAI_BASE_URL=https://openrouter.ai/api/v1`).
 
-**Клиент:** `langchain_openai.ChatOpenAI(model=config.MODEL, temperature=...)` внутри `create_agent()`.
+**Клиент:** `langchain_openai.ChatOpenAI(model=config.MODEL, temperature=..., max_retries=config.LLM_MAX_RETRIES, request_timeout=config.LLM_REQUEST_TIMEOUT)` внутри `create_agent()`.
 
 **Параметры из `.env`:**
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MODEL` — основной агент.
+- `LLM_MAX_RETRIES`, `LLM_REQUEST_TIMEOUT` — повторы при временных ошибках API (в т.ч. 429) и таймаут запроса к LLM.
 - `RAGAS_LLM_MODEL`, `RAGAS_EMBEDDING_MODEL` — фиксированные модели для воспроизводимой оценки.
 - `EMBEDDING_PROVIDER`, `HUGGINGFACE_*`, `EMBEDDING_MODEL` — embeddings.
 
@@ -149,11 +149,12 @@ Telegram /evaluate_dataset → handlers.py → evaluation.evaluate_dataset:
 ## Сценарии работы
 
 1. **Первый запуск:** `/start` → приветствие, инициализация thread.
-2. **Простой диалог:** «Привет» → агент отвечает напрямую, без `rag_search`.
+2. **Простой диалог:** «Привет» → агент отвечает напрямую, без вызова инструментов.
 3. **Продуктовый вопрос:** «Какие условия кредита?» → агент вызывает `rag_search` → формирует ответ.
 4. **Уточнение:** «А досрочно можно?» → агент использует историю и при необходимости второй раз вызывает `rag_search`.
-5. **Сброс:** `/start` → новый thread, история теряется.
-6. **Evaluation:** `/evaluate_dataset` → бот возвращает 6 RAGAS-метрик.
+5. **Конвертация валют:** «Сколько будет 200 евро в рублях?» → агент вызывает `currency_converter` → ответ с курсом (ЦБ РФ или запасной API, если `cbr.ru` недоступен).
+6. **Сброс:** `/start` → новый thread, история теряется.
+7. **Evaluation:** `/evaluate_dataset` → бот возвращает 6 RAGAS-метрик.
 
 ## Подход к конфигурированию
 
@@ -165,7 +166,7 @@ Telegram /evaluate_dataset → handlers.py → evaluation.evaluate_dataset:
 
 - Стандартный `logging`.
 - StreamHandler в консоль + FileHandler в `logs/bot.log`.
-- Что логируем: старт/стоп, индексация, конфигурация, ReAct-шаги (Reason / Act / Tool result / Respond), ошибки.
+- Что логируем: старт/стоп, индексация, конфигурация (в т.ч. retries/timeout LLM), ReAct-шаги (Reason / Act / Tool result / Respond), ошибки.
 
 ## Режимы Retrieval
 

@@ -17,7 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import ToolMessage
 
 from config import config
-from tools import rag_search
+from tools import currency_converter, rag_search
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,13 @@ def create_bank_agent():
     # Инициализируем LLM (модель которая будет рассуждать и принимать решения)
     llm = ChatOpenAI(
         model=config.MODEL,
-        temperature=0.7  # Умеренная креативность для естественных ответов
+        temperature=0.7,
+        max_retries=config.LLM_MAX_RETRIES,
+        request_timeout=config.LLM_REQUEST_TIMEOUT,
     )
     
     # Инструменты которыми может пользоваться агент
-    tools = [rag_search]
+    tools = [rag_search, currency_converter]
     
     # MemorySaver - сохраняет историю диалога в памяти (для многошагового диалога)
     # Каждый chat_id получает свою независимую историю

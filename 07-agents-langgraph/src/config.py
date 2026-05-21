@@ -9,6 +9,11 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
     MODEL = os.getenv("MODEL")
+    # Повторы при ошибках API (в т.ч. 429): клиент OpenAI делает экспоненциальную задержку между попытками.
+    # Это не отменяет жёсткий лимит бесплатной модели, но помогает при временных «retry shortly».
+    LLM_MAX_RETRIES = max(0, int(os.getenv("LLM_MAX_RETRIES", "8")))
+    # Таймаут одного HTTP-запроса к LLM (секунды); не связан с 429, только с долгим ответом модели.
+    LLM_REQUEST_TIMEOUT = float(os.getenv("LLM_REQUEST_TIMEOUT", "120"))
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
     DATA_DIR = os.getenv("DATA_DIR", "data")
     PROMPTS_DIR = os.getenv("PROMPTS_DIR", "prompts")
