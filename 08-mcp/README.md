@@ -8,18 +8,20 @@
 - 🧠 **Самостоятельное принятие решений** - агент сам выбирает какой инструмент использовать
 - 🔄 **ReAct паттерн:**
   - **Reason (Think)** - анализирует вопрос и контекст
-  - **Act** - вызывает нужный инструмент (rag_search / search_products / currency_converter)
+  - **Act** - вызывает нужный инструмент (rag_search / MCP-инструменты)
   - **Respond** - формирует ответ на основе полученных данных
-- 🛠️ **3 типа инструментов:**
+- 🛠️ **4 типа инструментов:**
   - `rag_search` - поиск в статических PDF документах
   - `search_products` - актуальные банковские продукты (MCP)
   - `currency_converter` - курсы валют ЦБ РФ (MCP)
+  - `calculate_deposit_profit` - расчёт доходности вклада по сумме, ставке и сроку (MCP)
 - 💾 **MemorySaver** - автоматическое сохранение истории диалогов
 - 🎯 **Умная стратегия:**
   - Простые вопросы ("привет", "спасибо") → отвечает напрямую
   - Общие условия → использует rag_search (PDF документы)
-  - Актуальные ставки → использует search_products (MCP)
+  - Актуальные ставки и продукты → использует search_products (MCP)
   - Курсы валют → использует currency_converter (MCP)
+  - «Сколько заработаю на вкладе» → использует calculate_deposit_profit (MCP)
 - 📝 **Гибкие промпты** - системный промпт загружается из файла
 
 ### 🔍 Advanced Hybrid RAG
@@ -54,10 +56,10 @@
 
 ### Установка
 
-1. Клонируйте репозиторий:
+1. Клонируйте репозиторий и перейдите в каталог модуля:
    ```bash
    git clone <repository-url>
-   cd telegram-llm-bot
+   cd 08-mcp
    ```
 
 2. Установите зависимости:
@@ -80,6 +82,7 @@
    Сервер предоставляет:
    - Актуальные банковские продукты (вклады, кредиты, карты)
    - Курсы валют ЦБ РФ в реальном времени
+   - Расчёт доходности вклада (с капитализацией или без)
 
 6. Запустите бота:
    ```bash
@@ -113,49 +116,34 @@
 
 ### Примеры конфигурации
 
-**Вариант 1: OpenRouter**
+**OpenRouter (рекомендуется для разработки):**
 
 ```bash
-# Telegram
 TELEGRAM_TOKEN=your_telegram_bot_token
 
-# OpenRouter
 OPENAI_API_KEY=sk-or-v1-...
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
-MODEL=openai/gpt-oss-20b:free
+MODEL=openai/gpt-4o
 EMBEDDING_MODEL=openai/text-embedding-3-large
 
-# Пути
 DATA_DIR=data
 PROMPTS_DIR=prompts
-CONVERSATION_SYSTEM_PROMPT_FILE=conversation_system.txt
-QUERY_TRANSFORM_PROMPT_FILE=query_transform.txt
+AGENT_SYSTEM_PROMPT_FILE=agent_system.txt
 
-# Системный промпт
-SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий на вопросы по документам.
+MCP_ENABLED=true
+MCP_SERVER_URL=http://localhost:8000/mcp
 ```
 
-**Вариант 2: Fireworks**
+**Fireworks (только отличия от OpenRouter):**
 
 ```bash
-# Telegram
-TELEGRAM_TOKEN=your_telegram_bot_token
-
-# Fireworks
 OPENAI_API_KEY=fw_...
 OPENAI_BASE_URL=https://api.fireworks.ai/inference/v1
 MODEL=accounts/fireworks/models/gpt-oss-120b
 EMBEDDING_MODEL=accounts/fireworks/models/qwen3-embedding-8b
-
-# Пути
-DATA_DIR=data
-PROMPTS_DIR=prompts
-CONVERSATION_SYSTEM_PROMPT_FILE=conversation_system.txt
-QUERY_TRANSFORM_PROMPT_FILE=query_transform.txt
-
-# Системный промпт
-SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий на вопросы по документам.
 ```
+
+Полный шаблон — **`env.example`**. Поведение агента — **`prompts/agent_system.txt`** (`AGENT_SYSTEM_PROMPT_FILE`). Переменные `SYSTEM_PROMPT`, `conversation_system.txt`, `query_transform.txt` **не используются**.
 
 ### Описание параметров
 
@@ -168,14 +156,16 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 - `MODEL` - модель для ReAct агента (принятие решений и генерация ответов)
 - `EMBEDDING_MODEL` - модель для создания эмбеддингов документов
 
-**Пути:**
-- `DATA_DIR` - директория с PDF документами (по умолчанию: `data`)
-- `PROMPTS_DIR` - директория с файлами промптов (по умолчанию: `prompts`)
-- `CONVERSATION_SYSTEM_PROMPT_FILE` - файл промпта для диалога
-- `QUERY_TRANSFORM_PROMPT_FILE` - файл промпта для трансформации запросов
+**Пути и промпт агента:**
+- `DATA_DIR` — PDF для RAG (по умолчанию: `data`)
+- `PROMPTS_DIR` — каталог промптов (по умолчанию: `prompts`)
+- `AGENT_SYSTEM_PROMPT_FILE` — файл системного промпта (по умолчанию: `agent_system.txt`)
 
-**Промпты:**
-- `SYSTEM_PROMPT` - системная инструкция для бота
+**MCP:**
+- `MCP_ENABLED` — подключать MCP-инструменты (по умолчанию: `true`)
+- `MCP_SERVER_URL` — URL сервера (по умолчанию: `http://localhost:8000/mcp`)
+
+**RAG (опционально):** `RETRIEVAL_MODE`, `EMBEDDING_PROVIDER` и др. — см. [Advanced Hybrid RAG](#-advanced-hybrid-rag) и `env.example`.
 
 ## 📚 Добавление документов
 
@@ -217,10 +207,17 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 👤 Какие сейчас ставки по вкладам?
 🤖 Найдено 4 вклада:
 
-   1. Пополняй - от 15% до 16% годовых, сумма от 1,000 до 10,000,000 RUB
-   2. Сохраняй - от 16% до 17% годовых, сумма от 50,000 до 10,000,000 RUB
-   3. Управляй - от 14.5% до 15% годовых
-   4. Пенсионный Плюс - от 17% до 18% годовых (для пенсионеров)
+   1. Пополняй — от 15% до 16% годовых, от 1 000 ₽
+   2. Сохраняй — от 16% до 17% годовых, от 50 000 ₽
+   3. Накопительный счёт — от 12% до 14% годовых
+   4. Пенсионный Плюс — от 17% до 18% годовых (для пенсионеров)
+```
+
+**Расчёт вклада (calculate_deposit_profit via MCP):**
+```
+👤 Сколько будет 100 000 ₽ под 15% на 12 месяцев с капитализацией?
+🤖 Ожидаемый доход: ~16 075 ₽, итого к концу срока: ~116 075 ₽
+   (приблизительный расчёт; не оферта банка)
 ```
 
 **Курсы валют (currency_converter via MCP):**
@@ -236,11 +233,15 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 ```
 👤 Какие вклады есть в Сбербанке?
 🤖 [использует search_products] 
-   Доступно 4 вида вкладов: Пополняй, Сохраняй, Управляй, Пенсионный Плюс...
+   Доступно 4 вида вкладов: Пополняй, Сохраняй, Накопительный счёт, Пенсионный Плюс...
 
 👤 А какие требования к вкладчикам?
 🤖 [использует rag_search]
    По документу, для открытия вклада требуется...
+
+👤 Сколько заработаю, если положу 100 000 под 15% на год с капитализацией?
+🤖 [использует calculate_deposit_profit]
+   Ожидаемый доход и итоговая сумма по заданным параметрам...
 
 👤 Какой курс евро?
 🤖 [использует currency_converter]
@@ -265,12 +266,12 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 │   ├── agent.py                # ReAct агент с MCP инструментами
 │   ├── tools.py                # Инструмент rag_search
 │   ├── indexer.py              # Загрузка и индексация PDF + JSON
-│   ├── rag.py                  # RAG-логика: retriever, цепочки, промпты
+│   ├── rag.py                  # RAG: retriever, режимы semantic/hybrid/reranker
 │   ├── dataset_synthesizer.py  # Синтез тестовых датасетов
 │   └── evaluation.py           # Оценка качества через RAGAS
 ├── mcp/
 │   └── mcp-bank-agent/         # MCP сервер для динамических данных
-│       ├── server.py           # FastMCP сервер с инструментами
+│       ├── server.py           # FastMCP: search_products, currency_converter, calculate_deposit_profit
 │       ├── data/
 │       │   └── bank_products.json  # База актуальных продуктов
 │       ├── Makefile            # Команды для MCP сервера
@@ -297,7 +298,7 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
 
 2. **Подключение к MCP** (при старте бота):
    ```
-   MCP Client → http://localhost:8000/mcp → Загрузка инструментов (search_products, currency_converter)
+   MCP Client → http://localhost:8000/mcp → Загрузка инструментов (search_products, currency_converter, calculate_deposit_profit)
    ```
 
 3. **Обработка вопроса пользователя**:
@@ -307,6 +308,7 @@ SYSTEM_PROMPT=Ты ассистент Сбербанка, отвечающий �
      • rag_search (PDF)
      • search_products (MCP)
      • currency_converter (MCP)
+     • calculate_deposit_profit (MCP)
    → Получает данные → Формирует ответ (Respond)
    ```
 
@@ -608,10 +610,11 @@ RAGAS_EMBEDDING_MODEL=text-embedding-3-large
 make install         # Установить зависимости
 make run             # Запустить бота
 make run-mcp-bank    # Запустить MCP сервер (порт 8000)
-make test-mcp-bank   # Протестировать MCP сервер
 make dataset         # Создать тестовый датасет
 make dataset-upload  # Загрузить датасет в LangSmith
 ```
+
+Подробнее по MCP-серверу: [mcp/mcp-bank-agent/README.md](mcp/mcp-bank-agent/README.md)
 
 ### 🏦 MCP Сервер
 
@@ -620,21 +623,19 @@ MCP (Model Context Protocol) сервер предоставляет динам�
 **Инструменты:**
 - `search_products` - поиск актуальных банковских продуктов (вклады, кредиты, карты, счета)
 - `currency_converter` - конвертация валют по курсам ЦБ РФ
+- `calculate_deposit_profit` - расчёт дохода и итоговой суммы вклада (без внешних API)
 
 **Запуск:**
 ```bash
-# В отдельном терминале
+# В отдельном терминале (удобнее на Windows — без вложенного make):
 cd mcp/mcp-bank-agent
-make run
+uv run server.py
 
 # Или из корневой директории
 make run-mcp-bank
 ```
 
-**Тестирование:**
-```bash
-make test-mcp-bank  # Проверка что сервер отвечает
-```
+**Проверка:** сервер слушает порт 8000 (`Uvicorn running on http://127.0.0.1:8000`); в Telegram — вопросы про вклады, курс USD или расчёт вклада.
 
 **Конфигурация через `.env`:**
 ```bash
@@ -652,29 +653,11 @@ MCP_SERVER_TRANSPORT=streamable_http
 - API валют: `https://www.cbr-xml-daily.ru/latest.js`
 
 **Graceful degradation:**
-Если `MCP_ENABLED=false` или MCP сервер недоступен, бот продолжит работать с `rag_search` без динамических инструментов.
+Если `MCP_ENABLED=false` или MCP сервер недоступен, бот продолжит работать с `rag_search` без MCP-инструментов.
 
 ### Редактирование промптов
 
-Промпты находятся в `prompts/` и могут редактироваться без изменения кода:
-
-**`prompts/conversation_system.txt`** - как бот отвечает на вопросы:
-```
-Ты ассистент Сбербанка для ответов на вопросы. Отвечай на вопросы пользователей 
-на основе истории диалога и контекста, полученного для последнего вопроса. 
-
-Если в контексте нет информации для ответа, строго отвечай: 
-"Я не нашел ответа на ваш вопрос в доступных документах."
-
-Используй максимум 3-4 предложения и давай конкретные ответы.
-```
-
-**`prompts/query_transform.txt`** - как трансформируются уточняющие вопросы:
-```
-Преобразуй последнее сообщение пользователя в поисковый запрос на русском языке, 
-учитывая всю историю диалога выше. Тщательно проанализируй все сообщения для 
-создания максимально релевантного запроса.
-```
+Системный промпт ReAct-агента — **`prompts/agent_system.txt`**: когда вызывать `rag_search`, MCP-инструменты и примеры вызовов. Редактируется без изменения кода; после правок перезапустите бота.
 
 ### Логи
 
@@ -696,12 +679,9 @@ MCP_SERVER_TRANSPORT=streamable_http
 
 ### Настройка параметров RAG
 
-В `src/indexer.py` и `src/bot.py` можно настроить:
-
-- **Размер чанков**: `chunk_size=500` (в RecursiveCharacterTextSplitter)
-- **Перекрытие чанков**: `chunk_overlap=50`
-- **Количество чанков для поиска**: `k=3` (в retriever)
-- **Temperature** для LLM: `temperature=0.9` (в rag.py)
+- **Чанки:** `chunk_size=500`, `chunk_overlap=50` в `src/indexer.py`
+- **Retrieval:** `RETRIEVAL_MODE`, `SEMANTIC_RETRIEVER_K`, `BM25_RETRIEVER_K` и др. в `.env` (см. `env.example`)
+- **Temperature агента:** `temperature=0.7` в `src/agent.py`
 
 ## ⚠️ Ограничения
 
@@ -712,6 +692,11 @@ MCP_SERVER_TRANSPORT=streamable_http
 - При большом количестве документов может требоваться больше памяти
 
 ## 🐛 Устранение неполадок
+
+**Проблема: MCP-инструменты не работают**
+- Запустите MCP сервер в отдельном терминале: `make run-mcp-bank` или `cd mcp/mcp-bank-agent && uv run server.py`
+- Проверьте `MCP_ENABLED=true` и `MCP_SERVER_URL=http://localhost:8000/mcp` в `.env`
+- На Windows при Ctrl+C может спросить «Завершить выполнение пакетного файла?» — ответьте **Y**
 
 **Проблема: Бот не отвечает на вопросы**
 - Проверьте `/index_status` - должны быть проиндексированы документы
@@ -726,6 +711,15 @@ MCP_SERVER_TRANSPORT=streamable_http
 - Возможно, вопросы не связаны с содержимым документов
 - Попробуйте задать более конкретные вопросы по тематике документов
 - Проверьте, что индексация прошла успешно (`/index_status`)
+
+## 📄 Документация проекта
+
+| Файл | Содержание |
+|------|------------|
+| [docs/idea.md](docs/idea.md) | Бизнес-идея, эволюция функционала (в т.ч. MCP и расчёт вклада) |
+| [docs/vision.md](docs/vision.md) | Техническое видение, архитектура, разделение инструментов |
+| [docs/tasklist.md](docs/tasklist.md) | План итераций: спринты 1–7; **ДЗ-08** (шаг 1 — проверка Спр. 6, шаг 2 — **Спринт 7**) |
+| [mcp/mcp-bank-agent/README.md](mcp/mcp-bank-agent/README.md) | MCP-сервер: инструменты и примеры |
 
 ## 📝 Лицензия
 

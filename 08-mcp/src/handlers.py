@@ -76,7 +76,8 @@ async def cmd_help(message: Message):
         "*🛠️ Мои инструменты:*\n"
         "📄 `rag_search` \\- поиск в PDF документах\n"
         "🏦 `search_products` \\- актуальные продукты банка \\(MCP\\)\n"
-        "💱 `currency_converter` \\- курсы валют ЦБ РФ \\(MCP\\)\n\n"
+        "💱 `currency_converter` \\- курсы валют ЦБ РФ \\(MCP\\)\n"
+        "📈 `calculate_deposit_profit` \\- расчёт дохода по вкладу \\(MCP\\)\n\n"
         "*📋 Доступные команды:*\n"
         "/start \\- Начать новый диалог\n"
         "/help \\- Показать эту справку\n"
@@ -96,6 +97,9 @@ async def cmd_help(message: Message):
         "• Какой курс доллара?\n"
         "• Сколько 1000 евро в рублях?\n"
         "• Конвертируй 50 USD в RUB\n\n"
+        "*Расчёт вклада* \\(calculate\\_deposit\\_profit\\):\n"
+        "• Сколько будет 100 000 ₽ под 15% на 12 месяцев с капитализацией?\n"
+        "• Сколько дохода на вкладе без капитализации?\n\n"
         "_Используй /index\\_status для просмотра конфигурации\\._"
     )
     await message.answer(help_text, parse_mode="MarkdownV2")

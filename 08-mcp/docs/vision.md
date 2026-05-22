@@ -51,7 +51,7 @@
 ├── mcp/                # MCP серверы для расширения функциональности
 │   ├── mcp-http/       # Пример: поиск по тикетам поддержки
 │   └── mcp-bank-agent/ # MCP сервер с инструментами для банковского агента
-│       ├── server.py   # FastMCP сервер с search_products и currency_converter
+│       ├── server.py   # FastMCP: search_products, currency_converter, calculate_deposit_profit
 │       ├── data/       # Статические данные о продуктах банка
 │       ├── pyproject.toml
 │       ├── Makefile
@@ -151,9 +151,10 @@
    - Запуск через CLI: `python -m src.dataset_synthesizer [--upload]`
 
 9. **mcp/mcp-bank-agent/** - MCP сервер для банковских инструментов
-   - `server.py` - FastMCP сервер со streamable-http транспортом (порт 8001)
+   - `server.py` - FastMCP сервер со streamable-http транспортом (порт задаётся `PORT`, по умолчанию 8000; URL в конфиге `MCP_SERVER_URL`)
    - `search_products(product_type, keyword, ...)` - универсальный поиск продуктов банка
    - `currency_converter(from_currency, to_currency, amount)` - конвертация валют через ЦБ РФ API
+   - `calculate_deposit_profit(initial_amount, annual_rate, term_months, capitalization)` - расчёт доходности вклада без внешних API (простые формулы)
    - `data/bank_products.json` - статические данные о продуктах Сбербанка
    - Запуск: `make run-mcp-bank` или `cd mcp/mcp-bank-agent && uv run python server.py`
 
@@ -161,7 +162,7 @@
 ```
 Telegram → handlers.py (HumanMessage) →
 agent.py::agent_answer() (thread_id = chat_id) →
-bank_agent (ReAct цикл с 3 типами инструментов):
+bank_agent (ReAct цикл: rag_search + MCP инструменты):
     1. Think (Reason) - агент анализирует вопрос и выбирает инструмент
     2. Act - вызов одного из инструментов:
        ├─ tools.py::rag_search(query) → PDF документы
@@ -170,31 +171,37 @@ bank_agent (ReAct цикл с 3 типами инструментов):
        │  найденные документы → возврат контекста агенту
        │
        ├─ MCP::search_products(product_type, ...) → актуальные продукты
-       │  HTTP запрос к mcp-bank-agent (port 8001) →
+       │  HTTP к mcp-bank-agent (MCP_SERVER_URL) →
        │  фильтрация по bank_products.json →
        │  список продуктов → возврат агенту
        │
-       └─ MCP::currency_converter(from, to, amount) → курсы валют
-          HTTP запрос к mcp-bank-agent (port 8001) →
-          API запрос к cbr-xml-daily.ru →
-          текущий курс + конвертация → возврат агенту
+       ├─ MCP::currency_converter(from, to, amount) → курсы валют
+       │  HTTP к mcp-bank-agent →
+       │  API cbr-xml-daily.ru →
+       │  текущий курс + конвертация → возврат агенту
+       │
+       └─ MCP::calculate_deposit_profit(...) → расчёт вклада
+          HTTP к mcp-bank-agent →
+          локальный расчёт (без внешнего API) →
+          итоговая сумма и доход → возврат агенту
     3. Respond - агент формирует ответ на основе полученных данных
     4. End - если информация не нужна, агент отвечает напрямую
 → AIMessage → handlers.py → Telegram
 
 История: MemorySaver в bank_agent (thread_id = chat_id)
 Промпты: загружаются из prompts/agent_system.txt
-MCP: MultiServerMCPClient подключается к localhost:8001
+MCP: MultiServerMCPClient подключается к URL из config.MCP_SERVER_URL (по умолчанию http://localhost:8000/mcp)
 ```
 
 **Принципы разделения инструментов:**
 - **rag_search** (PDF документы): общие условия, правила, инструкции из статических документов
 - **search_products** (MCP): актуальные ставки, акции, текущие продукты (динамические данные)
 - **currency_converter** (MCP): курсы валют в реальном времени через API ЦБ РФ
+- **calculate_deposit_profit** (MCP): модель расчёта доходности по заданным сумме, ставке и сроку; без вызова внешних сервисов
 
 **MCP интеграция:**
 - Протокол: streamable-http (HTTP transport для MCP)
-- Порт: 8001 (8000 занят mcp-http)
+- URL: задаётся `MCP_SERVER_URL`; отдельный пример второго MCP в `mcp/mcp-http` может использовать другой порт
 - Клиент: MultiServerMCPClient из langchain-mcp-adapters
 - Инструменты подключаются динамически при старте агента
 - Stateless: каждый вызов = новая сессия MCP

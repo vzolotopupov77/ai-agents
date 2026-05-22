@@ -27,10 +27,11 @@ async def create_bank_agent():
     """
     Создает ReAct агента для банковского ассистента используя create_agent() из LangChain 1.0
     
-    Подключает три типа инструментов:
+    Подключает четыре типа инструментов:
     1. rag_search - поиск в статических PDF документах
     2. search_products - поиск актуальных продуктов банка (MCP)
     3. currency_converter - конвертация валют (MCP)
+    4. calculate_deposit_profit - расчёт доходности вклада (MCP)
     
     Returns:
         Скомпилированный агент LangChain 1.0 с MemorySaver для сохранения истории диалогов
@@ -49,7 +50,7 @@ async def create_bank_agent():
     # Базовый инструмент - поиск в PDF документах
     tools = [rag_search]
     
-    # Подключаем MCP инструменты (search_products, currency_converter)
+    # Подключаем MCP инструменты (search_products, currency_converter, calculate_deposit_profit)
     if config.MCP_ENABLED:
         try:
             logger.info(f"Connecting to MCP server '{config.MCP_SERVER_NAME}' at {config.MCP_SERVER_URL}...")
@@ -75,7 +76,7 @@ async def create_bank_agent():
                 
         except Exception as e:
             logger.warning(f"⚠️  Failed to connect to MCP server: {e}")
-            logger.warning("   Agent will work without MCP tools (search_products, currency_converter)")
+            logger.warning("   Agent will work without MCP tools (search_products, currency_converter, calculate_deposit_profit)")
             logger.warning("   To enable MCP tools, start the server: make run-mcp-bank")
     else:
         logger.info("ℹ️  MCP is disabled (MCP_ENABLED=false), agent will use only rag_search")

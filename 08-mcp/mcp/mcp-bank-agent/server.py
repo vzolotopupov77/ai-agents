@@ -2,9 +2,10 @@
 """
 Bank Agent MCP Server
 
-Предоставляет два инструмента для банковского агента:
-1. search_products - поиск актуальных продуктов банка (вклады, кредиты, карты)
-2. currency_converter - конвертация валют по курсам ЦБ РФ
+Инструменты для банковского агента:
+1. search_products — поиск актуальных продуктов банка (вклады, кредиты, карты)
+2. currency_converter — конвертация валют по курсам ЦБ РФ
+3. calculate_deposit_profit — расчёт доходности вклада (с ежемесячной капитализацией или без)
 
 Транспорт: streamable-http (HTTP MCP server)
 Порт: 8000 (по умолчанию для FastMCP)
@@ -234,6 +235,33 @@ def convert_currency(
         return rate, rate_str
 
 
+def compute_deposit_profit(
+    initial_amount: float,
+    annual_rate: float,
+    term_months: int,
+    capitalization: bool,
+) -> tuple[float, float]:
+    """
+    Доход и итоговая сумма по вкладу (упрощённая модель).
+
+    Без капитализации: простые проценты по месяцам (ставка годовых / 12 × срок в месяцах).
+    С капитализацией: ежемесячная капитализация по формуле сложного процента.
+    Возвращает (доход_руб, итого_руб).
+    """
+    monthly = annual_rate / 100 / 12
+    if capitalization:
+        final = initial_amount * (1 + monthly) ** term_months
+        profit = final - initial_amount
+    else:
+        profit = initial_amount * monthly * term_months
+        final = initial_amount + profit
+    return profit, final
+
+
+def format_money(value: float) -> str:
+    return f"{value:,.2f}".replace(",", " ")
+
+
 # Create FastMCP server
 mcp = FastMCP("mcp-bank-agent", dependencies=["requests>=2.31.0"])
 
@@ -393,6 +421,55 @@ async def currency_converter(
         return result_str  # Сообщение об ошибке
     
     return result_str
+
+
+@mcp.tool(
+    name="calculate_deposit_profit",
+    description="Расчёт доходности вклада с учётом капитализации процентов",
+)
+async def calculate_deposit_profit(
+    initial_amount: Annotated[
+        float,
+        Field(description="Начальная сумма вклада в рублях", ge=1000),
+    ],
+    annual_rate: Annotated[
+        float,
+        Field(description="Годовая процентная ставка (в процентах)", ge=0, le=100),
+    ],
+    term_months: Annotated[
+        int,
+        Field(description="Срок вклада в месяцах", ge=1, le=60),
+    ],
+    capitalization: Annotated[
+        bool,
+        Field(description="Капитализация процентов"),
+    ] = False,
+) -> str:
+    """
+    Приблизительный расчёт по заданным сумме, ставке и сроку (без учёта налогов и комиссий).
+    Не является офертой и не заменяет условия реального вклада.
+    """
+    logger.info(
+        "calculate_deposit_profit: amount=%s rate=%s months=%s cap=%s",
+        initial_amount,
+        annual_rate,
+        term_months,
+        capitalization,
+    )
+    profit, final_balance = compute_deposit_profit(
+        initial_amount,
+        annual_rate,
+        term_months,
+        capitalization,
+    )
+    cap_label = "с ежемесячной капитализацией" if capitalization else "без капитализации (простые проценты по месяцам)"
+    return (
+        f"Начальная сумма: {format_money(initial_amount)} ₽\n"
+        f"Ставка: {annual_rate}% годовых, срок: {term_months} мес., {cap_label}\n"
+        f"Ожидаемый доход: {format_money(profit)} ₽\n"
+        f"Итого к концу срока: {format_money(final_balance)} ₽\n\n"
+        "Приблизительный расчёт; итог в банке может отличаться (налоги, условия продукта)."
+    )
 
 
 if __name__ == "__main__":
