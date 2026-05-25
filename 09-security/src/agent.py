@@ -19,6 +19,11 @@ from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from config import config
+from middleware import (
+    ModelCallLimitMiddleware,
+    PIIMiddleware,
+    ToolCallLimitMiddleware,
+)
 from tools import rag_search
 
 logger = logging.getLogger(__name__)
@@ -87,26 +92,33 @@ async def create_bank_agent():
     
     # create_agent() - API LangChain 1.0
     # Автоматически создает ReAct loop (цикл рассуждения и действий)
-    # С Human-in-the-Loop middleware для критичных операций
+    # С лимитами вызовов, PII и Human-in-the-Loop
     agent_graph = create_agent(
         model=llm,
         tools=tools,
         system_prompt=system_prompt,
         checkpointer=checkpointer,
         middleware=[
-            # 🔒 Human-in-the-Loop для критичных операций
-            # Требует подтверждения пользователя для open_credit_card
+            ModelCallLimitMiddleware(run_limit=3, exit_behavior="end"),
+            ToolCallLimitMiddleware(run_limit=3, exit_behavior="end"),
+            PIIMiddleware(
+                "credit_card",
+                strategy="mask",
+                apply_to_input=False,
+                apply_to_output=True,
+            ),
             HumanInTheLoopMiddleware(
                 interrupt_on={
-                    "open_credit_card": {
-                        "allowed_decisions": ["approve", "reject"]
-                    }
+                    "open_credit_card": {"allowed_decisions": ["approve", "reject"]},
+                    "open_deposit": {"allowed_decisions": ["approve", "reject"]},
                 }
-            )
+            ),
         ]
     )
     
-    logger.info(f"✓ Bank agent created successfully with {len(tools)} tools and HITL middleware")
+    logger.info(
+        f"✓ Bank agent created with {len(tools)} tools, call limits + PII + HITL middleware"
+    )
     return agent_graph
 
 

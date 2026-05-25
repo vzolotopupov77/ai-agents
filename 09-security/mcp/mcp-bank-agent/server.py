@@ -26,8 +26,11 @@ logger = logging.getLogger("mcp-bank-agent")
 # Path to the products database
 PRODUCTS_DB_PATH = Path(__file__).parent / "data" / "bank_products.json"
 
-# CBR API endpoint
-CBR_API_URL = "https://www.cbr-xml-daily.ru/latest.js"
+# Источники курсов валют (пробуются по порядку)
+EXCHANGE_RATE_URLS = [
+    "https://www.cbr-xml-daily.ru/latest.js",
+    "https://open.er-api.com/v6/latest/RUB",
+]
 
 # Mock номер карты для демонстрации (константа)
 MOCK_CARD_NUMBER = "5105-1051-0510-5100"
@@ -156,19 +159,24 @@ def format_products(products: list[dict], limit: int = 10) -> str:
 
 def get_exchange_rates() -> dict:
     """
-    Получение курсов валют от ЦБ РФ
-    
-    API возвращает курсы относительно рубля (base: RUB).
-    Например: {"USD": 0.0124} означает 1 RUB = 0.0124 USD (или 1 USD ≈ 80.6 RUB)
+    Получение курсов валют (base: RUB).
+    Пробует источники по порядку, возвращает первый успешный ответ.
+    Формат: {"USD": 0.0124} — 1 RUB = 0.0124 USD (или 1 USD ≈ 80.6 RUB)
     """
-    try:
-        response = requests.get(CBR_API_URL, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        return data.get('rates', {})
-    except requests.RequestException as e:
-        logger.error(f"Error fetching exchange rates: {e}")
-        return {}
+    for url in EXCHANGE_RATE_URLS:
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            rates = data.get('rates', {})
+            if rates:
+                logger.info(f"Exchange rates loaded from {url}")
+                return rates
+        except requests.RequestException as e:
+            logger.warning(f"Failed to fetch exchange rates from {url}: {e}")
+    
+    logger.error("All exchange rate sources failed")
+    return {}
 
 
 def convert_currency(
@@ -704,10 +712,89 @@ async def open_credit_card(
     return result
 
 
+@mcp.tool(
+    name="open_deposit",
+    description="Открытие нового вклада для клиента",
+)
+async def open_deposit(
+    client_name: Annotated[
+        str,
+        Field(
+            description="Имя клиента (владельца вклада)",
+            min_length=2,
+            max_length=100,
+            examples=["Иван Петров", "Мария Козлова"]
+        )
+    ],
+    amount: Annotated[
+        float,
+        Field(description="Сумма вклада в рублях", ge=1000, examples=[50000, 100000, 500000])
+    ],
+    term_months: Annotated[
+        int,
+        Field(description="Срок вклада в месяцах", ge=1, le=120, examples=[3, 6, 12, 24])
+    ],
+    rate: Annotated[
+        float,
+        Field(description="Процентная ставка годовых", ge=0.1, le=100, examples=[12.0, 15.5, 18.0])
+    ],
+) -> str:
+    """
+    Открытие нового вклада. Возвращает номер договора и детали.
+
+    Мок-реализация: генерирует номер договора и рассчитывает ожидаемый доход.
+
+    Args:
+        client_name: Имя клиента
+        amount: Сумма вклада в рублях
+        term_months: Срок вклада в месяцах
+        rate: Годовая процентная ставка
+
+    Returns:
+        Форматированная информация об открытом вкладе
+    """
+    import random
+    from datetime import datetime, timedelta
+
+    logger.info(
+        f"🏦 open_deposit called: client={client_name}, amount={amount}, "
+        f"term={term_months}m, rate={rate}%"
+    )
+
+    # Генерируем номер договора (мок)
+    contract_number = f"ВКЛ-{datetime.now().strftime('%Y%m%d')}-{random.randint(100000, 999999)}"
+
+    # Рассчитываем доход (простой процент)
+    income, total = calculate_simple_interest(amount, rate, term_months)
+
+    # Дата открытия и дата окончания
+    open_date = datetime.now()
+    close_date = open_date + timedelta(days=round(term_months * 30.44))
+
+    result = (
+        "✅ **Вклад успешно открыт!**\n\n"
+        "📋 **Детали вклада:**\n"
+        f"   Номер договора: {contract_number}\n"
+        f"   Владелец: {client_name}\n"
+        f"   Сумма: {amount:,.0f}₽\n"
+        f"   Процентная ставка: {rate}% годовых\n"
+        f"   Срок: {term_months} мес.\n"
+        f"   Дата открытия: {open_date.strftime('%d.%m.%Y')}\n"
+        f"   Дата закрытия: {close_date.strftime('%d.%m.%Y')}\n\n"
+        "💰 **Ожидаемый доход:**\n"
+        f"   Доход: {income:,.2f}₽\n"
+        f"   Итоговая сумма: {total:,.2f}₽\n"
+    )
+
+    logger.info(f"✓ Deposit opened: {contract_number} for {client_name}")
+
+    return result
+
+
 if __name__ == "__main__":
     logger.info("Starting Bank Agent MCP Server...")
     logger.info(f"Products database: {PRODUCTS_DB_PATH}")
-    logger.info(f"Currency API: {CBR_API_URL}")
+    logger.info(f"Exchange rate sources: {EXCHANGE_RATE_URLS}")
     
     # Проверяем наличие базы продуктов
     if not PRODUCTS_DB_PATH.exists():

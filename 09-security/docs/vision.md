@@ -41,7 +41,8 @@
 ├── src/
 │   ├── bot.py                  # Основной файл бота, инициализация aiogram и агента
 │   ├── handlers.py             # Обработчики команд, сообщений и callback_query (HITL)
-│   ├── agent.py                # ReAct агент с HumanInTheLoopMiddleware и MCP
+│   ├── agent.py                # ReAct агент: лимиты + PII + HITL + MCP
+│   ├── middleware.py           # PIIMiddleware, ModelCallLimit, ToolCallLimit
 │   ├── tools.py                # Инструмент rag_search для агента
 │   ├── rag.py                  # RAG-логика: retriever, базовые функции поиска
 │   ├── indexer.py              # Индексация: загрузка PDF, splitting, векторное хранилище
@@ -103,10 +104,12 @@
    - Поддержка двух провайдеров: openai, huggingface
    - Глобальная переменная `vector_store` для хранения векторного хранилища
 
-3. **agent.py** - ReAct агент с MCP интеграцией и HITL
+3. **agent.py** - ReAct агент с MCP, лимитами вызовов, PII и HITL
    - `create_bank_agent()` - создание агента через `create_agent()` из LangChain 1.0
+   - **ModelCallLimitMiddleware** / **ToolCallLimitMiddleware** (см. `middleware.py`) — лимиты на вызовы LLM и инструментов за один run (`run_limit`, `exit_behavior="end"`); порядок: сначала лимиты, затем PII, затем HITL
+   - **PIIMiddleware** — маскирование номеров карт в выводе модели (`apply_to_output=True`)
    - **HumanInTheLoopMiddleware** - middleware для подтверждения критичных операций
-   - Настройка `interrupt_on` для инструмента `open_credit_card` (легко расширяется)
+   - Настройка `interrupt_on` для инструментов `open_credit_card` и `open_deposit` (легко расширяется)
    - Использует ChatOpenAI модель и набор инструментов: rag_search + MCP tools
    - MCP клиент (MultiServerMCPClient) для подключения к MCP серверам
    - Системный промпт загружается из файла `prompts/agent_system.txt`
@@ -165,6 +168,7 @@
    - `currency_converter(from_currency, to_currency, amount)` - конвертация валют через ЦБ РФ API
    - `deposit_income_calculator(amount, rate, term_months, ...)` - расчет доходности вклада
    - `open_credit_card(card_type, client_name)` - открытие кредитной/дебетовой карты (требует HITL)
+   - `open_deposit(client_name, amount, term_months, rate)` - открытие вклада (требует HITL)
    - `data/bank_products.json` - статические данные о продуктах Сбербанка
    - Запуск: `make run-mcp-bank` или `cd mcp/mcp-bank-agent && uv run python server.py`
 
@@ -174,13 +178,14 @@
     - Примеры диалогов для лучшего понимания
     - Правила безопасности для критичных операций
 
-**Поток данных (ReAct Agent с MCP и HITL):**
+**Поток данных (ReAct Agent с MCP, лимитами, PII и HITL):**
+> Счётчики лимитов читают `request.state['messages']` и считают только сообщения **текущего хода** (после последнего `HumanMessage`). LangGraph запускает каждый нод через `copy_context()`, поэтому ContextVar между нодами не работает — источник истины это история сообщений. Параллельные tool calls в одном батче получают тот же объект `state`, что делает `id(request.state)` стабильным ключом батча.
 ```
 Telegram → handlers.py (HumanMessage) →
 agent.py::agent_answer() (thread_id = chat_id) →
-bank_agent (ReAct цикл с 5 типами инструментов):
-    1. Think (Reason) - агент анализирует вопрос и выбирает инструмент
-    2. Act - вызов одного из инструментов:
+bank_agent (ReAct цикл; middleware: лимиты → PII → HITL; 5 типов инструментов):
+    1. Think (Reason) — **ModelCallLimitMiddleware** считает обращение к LLM (при превышении лимита — текст «Запрос ограничен…» без дальнейших вызовов)
+    2. Act — **ToolCallLimitMiddleware** считает каждый вызов инструмента; при превышении возвращается ``ToolMessage`` с пояснением; при норме:
        ├─ tools.py::rag_search(query) → PDF документы
        │  rag.py::retrieve_documents() →
        │  retriever (semantic/hybrid/hybrid_reranker) →
@@ -202,7 +207,11 @@ bank_agent (ReAct цикл с 5 типами инструментов):
        │  простой/сложный процент + опциональные налоги →
        │  форматированный результат → возврат агенту
        │
-       └─ MCP::open_credit_card(card_type, client_name) → открытие карты
+       ├─ MCP::open_credit_card(card_type, client_name) → открытие карты
+          ⚠️ INTERRUPT! HumanInTheLoopMiddleware останавливает выполнение
+          → (аналогично open_deposit ниже)
+          
+       └─ MCP::open_deposit(client_name, amount, term_months, rate) → открытие вклада
           ⚠️ INTERRUPT! HumanInTheLoopMiddleware останавливает выполнение
           → возврат interrupt объекта в handlers.py через agent_answer()
           → handlers.py форматирует сообщение из параметров инструмента
@@ -220,14 +229,14 @@ bank_agent (ReAct цикл с 5 типами инструментов):
             → HTTP запрос к mcp-bank-agent (port 8000)
             → MCP сервер выполняет open_credit_card
             → возврат данных карты (номер, платежная система, срок, имя)
-            → агент формирует ответ с данными карты
+            → агент формирует ответ с данными карты → **PIIMiddleware** маскирует PAN в тексте `AIMessage` для пользователя
           IF reject:
             → агент получает сообщение "Операция отклонена пользователем"
             → формирует ответ об отклонении
           
           → очистка pending_interrupts[chat_id]
           
-    3. Respond - агент формирует ответ на основе полученных данных
+    3. Respond - агент формирует ответ на основе полученных данных; **PIIMiddleware** заменяет номера карт в тексте `AIMessage` на маску (`****-****-****-XXXX`) до передачи в Telegram
     4. End - если информация не нужна, агент отвечает напрямую
 → AIMessage → handlers.py → Telegram
 
@@ -242,6 +251,8 @@ HITL: pending_interrupts словарь хранит ожидающие подт
 - **search_products** (MCP): актуальные ставки, акции, текущие продукты (динамические данные)
 - **currency_converter** (MCP): курсы валют в реальном времени через API ЦБ РФ
 - **deposit_income_calculator** (MCP): расчет доходности вкладов с капитализацией и налогами
+- **open_credit_card** (MCP): открытие дебетовой/кредитной карты; выполнение только после подтверждения пользователем (HumanInTheLoopMiddleware); номер карты в тексте ответа маскируется (PIIMiddleware, см. `middleware.py`)
+- **open_deposit** (MCP): открытие вклада (имя клиента, сумма, срок, ставка); выполнение только после подтверждения пользователем (HumanInTheLoopMiddleware); возвращает номер договора и ожидаемый доход
 
 **MCP интеграция:**
 - Протокол: streamable-http (HTTP transport для MCP)
@@ -338,27 +349,62 @@ async def get_response(message_history: list[dict]) -> str:
 
 ## Сценарии работы
 
-**Сценарий 1: Первый запуск**
+**Сценарий 1: Первый запуск / сброс контекста**
 1. Пользователь отправляет `/start`
 2. Бот отвечает приветственным сообщением
-3. История диалога инициализируется с системным промптом
+3. MemorySaver инициализирует новый thread — история предыдущего диалога очищается
 
-**Сценарий 2: Диалог**
-1. Пользователь пишет текстовое сообщение
-2. Бот добавляет сообщение в историю чата
-3. Бот отправляет историю чата в LLM
-4. Бот получает ответ и добавляет его в историю чата
-5. Бот отправляет ответ пользователю
+**Сценарий 2: Вопрос по документам банка**
+1. Пользователь пишет вопрос об условиях кредита, вклада и т.п.
+2. `handlers.py` передаёт `HumanMessage` в `agent_answer()`
+3. Агент (ReAct): рассуждает → вызывает `rag_search` → получает фрагменты из PDF
+4. Формирует ответ; `PIIMiddleware` проверяет текст (карты здесь нет) → без изменений
+5. `AIMessage` → `handlers.py` → Telegram
 
-**Сценарий 3: Сброс контекста**
-1. Пользователь отправляет `/start`
-2. История диалога очищается
-3. Начинается новый диалог
+**Сценарий 3: Запрос актуальных данных (MCP)**
+1. Пользователь спрашивает про текущие ставки / курс валюты / доходность вклада
+2. Агент выбирает `search_products`, `currency_converter` или `deposit_income_calculator`
+3. `MultiServerMCPClient` → HTTP-запрос к mcp-bank-agent (port 8001)
+4. MCP-сервер возвращает данные; агент формирует ответ
+5. `PIIMiddleware` проверяет текст → без изменений (номеров карт нет)
+6. Ответ → Telegram
+
+**Сценарий 4: Открытие карты (HITL + PII)**
+1. Пользователь запрашивает открытие карты
+2. Агент вызывает `open_credit_card`; `HumanInTheLoopMiddleware` останавливает выполнение (`__interrupt__`)
+3. `handlers.py` показывает кнопки ✅ Подтвердить / ❌ Отклонить
+4. **Approve:** `agent_resume(..., "approve")` → MCP выполняет операцию → возвращает данные карты (полный PAN)
+   - Агент формирует текст ответа с PAN
+   - `PIIMiddleware.awrap_model_call` маскирует PAN в `AIMessage.content` → `****-****-****-XXXX`
+   - Замаскированный текст → Telegram
+5. **Reject:** `agent_resume(..., "reject")` → агент сообщает об отклонении, карта не открыта
+
+**Сценарий 5: Ручная переиндексация**
+1. Пользователь отправляет `/index`
+2. `handlers.py` → `indexer.reindex_all()` → пересоздаёт InMemoryVectorStore из PDF
+3. Бот подтверждает завершение
+
+**Сценарий 6: Оценка качества**
+1. Пользователь отправляет `/evaluate-dataset`
+2. `handlers.py` → `evaluation.evaluate_dataset()` → прогоняет все вопросы датасета через RAG
+3. RAGAS считает метрики; результаты загружаются в LangSmith как feedback
+4. Агрегированные метрики возвращаются в Telegram
+
+**Сценарий 8: Открытие вклада (HITL)**
+1. Пользователь запрашивает открытие вклада
+2. Агент уточняет все параметры (имя, сумма, ставка, срок), затем вызывает `open_deposit`
+3. `HumanInTheLoopMiddleware` создаёт `__interrupt__`, `handlers.py` показывает кнопки ✅ / ❌
+4. **Approve:** `agent_resume(..., "approve")` → MCP выполняет операцию → возвращает номер договора и доход
+5. **Reject:** агент сообщает об отклонении
+
+**Сценарий 7: Превышение лимитов (защита от зацикливания и злоупотреблений)**
+1. Агент пытается сделать более **3** вызовов LLM или более **3** вызовов инструментов за один запрос пользователя (`ModelCallLimitMiddleware` / `ToolCallLimitMiddleware`).
+2. При превышении пользователь получает дружественное текстовое сообщение об ограничении (ответ от модели-сообщение или текст из ``ToolMessage``), без падения бота.
 
 **Ограничения:**
-- Бот работает только с текстом (не обрабатывает фото, файлы, голосовые)
-- Один пользователь не блокирует других (асинхронность)
-- При перезапуске бота все истории теряются
+- Бот работает только с текстом (фото, файлы, голосовые не обрабатываются)
+- История хранится в памяти — при перезапуске теряется
+- Один пользователь не блокирует других (asyncio)
 
 ## Подход к конфигурированию
 

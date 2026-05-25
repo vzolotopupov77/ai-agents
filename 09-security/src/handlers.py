@@ -61,9 +61,11 @@ async def cmd_start(message: Message):
     await message.answer(
         "Привет! Я ReAct Agent ассистент Сбербанка.\n\n"
         "Я могу:\n"
-        "• Отвечать на вопросы по документам\n"
-        "• Помогать с информацией о кредитах и вкладах\n"
-        "• Поддерживать диалог с учетом контекста\n\n"
+        "• Отвечать на вопросы по документам банка\n"
+        "• Показывать актуальные продукты и ставки\n"
+        "• Конвертировать валюты по курсу ЦБ РФ\n"
+        "• Рассчитывать доходность вклада\n"
+        "• Открывать карты и вклады (с вашим подтверждением)\n\n"
         "Используйте /help для просмотра всех команд."
     )
 
@@ -82,7 +84,8 @@ async def cmd_help(message: Message):
         "🏦 `search_products` \\- актуальные продукты банка \\(MCP\\)\n"
         "💱 `currency_converter` \\- курсы валют ЦБ РФ \\(MCP\\)\n"
         "💰 `deposit_income_calculator` \\- расчет дохода по вкладу \\(MCP\\)\n"
-        "💳 `open_credit_card` \\- открытие карты \\(MCP\\, требует подтверждения\\)\n\n"
+        "💳 `open_credit_card` \\- открытие карты \\(MCP\\, требует подтверждения\\)\n"
+        "🏦 `open_deposit` \\- открытие вклада \\(MCP\\, требует подтверждения\\)\n\n"
         "*📋 Доступные команды:*\n"
         "/start \\- Начать новый диалог\n"
         "/help \\- Показать эту справку\n"
@@ -109,6 +112,9 @@ async def cmd_help(message: Message):
         "• Открой мне кредитную карту\n"
         "• Хочу оформить дебетовую карту\n"
         "• Мне нужна новая карта\n\n"
+        "*Открытие вклада* \\(open\\_deposit\\, требует подтверждения\\):\n"
+        "• Хочу открыть вклад\n"
+        "• Открой вклад на 200 тысяч под 15% на год\n\n"
         "_Используй /index\\_status для просмотра конфигурации\\._"
     )
     await message.answer(help_text, parse_mode="MarkdownV2")
@@ -385,6 +391,9 @@ async def handle_hitl_callback(callback: CallbackQuery):
             await callback.answer("⚠️ Запрос устарел", show_alert=True)
             return
         
+        # Подтверждаем callback немедленно — Telegram требует ответа в течение 30 сек
+        await callback.answer()
+
         # Удаляем кнопки
         await callback.message.edit_reply_markup(reply_markup=None)
         
@@ -392,14 +401,12 @@ async def handle_hitl_callback(callback: CallbackQuery):
         if action == "hitl_approve":
             decision = "approve"
             await callback.message.edit_text(
-                f"{callback.message.text}\n\n✅ **Операция подтверждена**",
-                parse_mode="Markdown"
+                f"{callback.message.text}\n\n✅ Операция подтверждена"
             )
         else:  # hitl_reject
             decision = "reject"
             await callback.message.edit_text(
-                f"{callback.message.text}\n\n❌ **Операция отклонена**",
-                parse_mode="Markdown"
+                f"{callback.message.text}\n\n❌ Операция отклонена"
             )
         
         # Удаляем из pending
@@ -428,10 +435,12 @@ async def handle_hitl_callback(callback: CallbackQuery):
         
         await callback.message.answer(final_response)
         
-        await callback.answer()
         logger.info(f"✓ HITL {decision} processed for chat {chat_id}")
         
     except Exception as e:
         logger.error(f"Error in handle_hitl_callback: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка обработки решения", show_alert=True)
+        try:
+            await callback.answer("❌ Ошибка обработки решения", show_alert=True)
+        except Exception:
+            pass
 
