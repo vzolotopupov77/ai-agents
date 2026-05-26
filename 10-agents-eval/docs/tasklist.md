@@ -41,8 +41,13 @@
 | 10 | 35 | Тест 1 - RAG Search (Superset) | ✅ Завершено | 28.11.2025 |
 | 10 | 36 | Тест 2 - MCP Search Products (Subset) | ✅ Завершено | 28.11.2025 |
 | 10 | 37 | Тест 3 - HITL Approval (LLM-as-Judge) | ✅ Завершено | 28.11.2025 |
-| 10 | 38 | Тест 4 - Combined Scenario (LLM-as-Judge с референсом) | ⏳ Не начато | - |
-| 10 | 39 | Обновление документации | ⏳ Не начато | - |
+| 10 | 38 | Тест 4 - Combined Scenario (LLM-as-Judge с референсом) | ✅ Завершено | 26.05.2026 |
+| 10 | 39 | Обновление документации | ✅ Завершено | 26.05.2026 |
+| ДЗ10 | ДЗ10-1 | Детерм. тест: вызов currency_converter (superset) | ✅ Завершено | 26.05.2026 |
+| ДЗ10 | ДЗ10-2 | Детерм. тест: unordered currency_converter + search_products | ✅ Завершено | 26.05.2026 |
+| ДЗ10 | ДЗ10-3 | Детерм. тест: args superset для USD→RUB | ✅ Завершено | 26.05.2026 |
+| ДЗ10 | ДЗ10-4 | Документация: спринт ДЗ10 в tasklist | ✅ Завершено | 26.05.2026 |
+| ДЗ10 | ДЗ10-5 | LLM-as-Judge: PII маскирование номера карты в ответе | ✅ Завершено | 26.05.2026 |
 
 **Легенда статусов:**
 - ⏳ Не начато
@@ -1080,6 +1085,73 @@
 - Запустить `make test-agent` - все 4 теста должны пройти
 - Проверить `make test-agent-verbose` - детальный вывод
 - Убедиться что README понятен новым пользователям
+
+---
+
+## Спринт ДЗ10: расширение trajectory-тестов (детерминированные + LLM-as-Judge)
+
+**Итог спринта:** добавлено 5 итераций — 3 новых детерминированных теста, исправлен и дополнен набор LLM-as-Judge тестов (в т.ч. PII-безопасность).
+
+Дополнения в [`tests/test_agent_deterministic.py`](tests/test_agent_deterministic.py): `create_trajectory_match_evaluator` из agentevals. Режим `unordered` здесь означает **двусторонний superset по списку tool_calls** (одинаковый набор вызовов, без лишних; порядок шагов в траектории не важен при сопоставлении).
+
+Дополнения в [`tests/test_agent_llm_judge.py`](tests/test_agent_llm_judge.py): исправлен `test_combined_scenario_with_ref` (инициализация `ChatOpenAI` напрямую, `continuous=True`); добавлен `test_pii_masking_llm_judge` с кастомным рубриком `TRAJECTORY_PII_SAFETY_PROMPT`.
+
+### Итерация ДЗ10-1: вызов конкретного инструмента (superset)
+
+**Цель:** убедиться, что для вопроса о курсе валют агент вызывает MCP `currency_converter`.
+
+- [x] Тест `test_currency_converter_called`: пользовательский запрос про курс USD/RUB.
+- [x] Референс: Human → AIMessage(tool: currency_converter) → ToolMessage → ответ.
+- [x] Evaluator: `trajectory_match_mode="superset"`, `tool_args_match_mode="ignore"`.
+
+**Проверка:** `pytest tests/test_agent_deterministic.py::test_currency_converter_called -v`
+
+---
+
+### Итерация ДЗ10-2: режим unordered (ровно два MCP-инструмента)
+
+**Цель:** проверить «одинаковый набор вызовов» для комбинации конвертации и каталога вкладов (без RAG), чтобы траектория была воспроизводимее.
+
+- [x] Тест `test_mcp_converter_and_products_unordered`: «50 USD по курсу ЦБ + ставки по вкладам».
+- [x] Референс: `currency_converter` и `search_products` в одном шаге (как типичный параллельный вызов).
+- [x] Evaluator: `trajectory_match_mode="unordered"`, `tool_args_match_mode="ignore"`.
+
+**Проверка:** `pytest tests/test_agent_deterministic.py::test_mcp_converter_and_products_unordered -v`
+
+---
+
+### Итерация ДЗ10-3: корректность аргументов (args superset)
+
+**Цель:** для явного перевода суммы в рублях проверять, что в вызове есть нужные коды валют.
+
+- [x] Тест `test_currency_converter_args_superset`: «Переведи 100 долларов в рубли».
+- [x] Референс-аргументы: `from_currency="USD"`, `to_currency="RUB"`; `amount` в референсе не задан — допускается в фактическом вызове.
+- [x] Evaluator: `trajectory_match_mode="superset"`, `tool_args_match_mode="superset"`.
+
+**Проверка:** `pytest tests/test_agent_deterministic.py::test_currency_converter_args_superset -v`
+
+---
+
+### Итерация ДЗ10-4: артефакты спринта
+
+**Цель:** зафиксировать спринт в плане.
+
+- [x] Обновить таблицу прогресса (строки ДЗ10-1 … ДЗ10-5).
+- [x] Описание итераций в этом разделе.
+- [x] Закрыть устаревшие строки 38, 39 спринта 10 как завершённые.
+- [x] Прогон: `pytest tests/test_agent_deterministic.py -m deterministic -v`
+
+---
+
+### Итерация ДЗ10-5: LLM-as-Judge — безопасность PII
+
+**Цель:** проверить, что [`PIIMiddleware`](src/agent.py) маскирует PAN в финальных сообщениях агента и что это устойчиво оценивается LLM-судьёй.
+
+- [x] Тест [`test_pii_masking_llm_judge`](tests/test_agent_llm_judge.py): запрос «как пользоваться картой …» с тестовым номером.
+- [x] Промпт-рубрика `TRAJECTORY_PII_SAFETY_PROMPT`: нет голого PAN в AIMessage; допустима маска вида `****-****-****-1234`.
+- [x] Evaluator: `create_async_trajectory_llm_as_judge` без `reference_outputs`, `continuous=True`, тот же `ChatOpenAI` что и в тесте с референсом.
+
+**Проверка:** `pytest tests/test_agent_llm_judge.py::test_pii_masking_llm_judge -v`
 
 ---
 

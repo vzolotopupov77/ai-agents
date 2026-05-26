@@ -1,7 +1,7 @@
 """
 E2E тесты агента с детерминированными evaluators
 
-Быстрые тесты с использованием match-based evaluators.
+Пять быстрых тестов (match-based evaluators из agentevals).
 Не требуют дорогих LLM вызовов, работают с любой моделью.
 
 Рекомендуется запускать для быстрой проверки:
@@ -160,6 +160,197 @@ async def test_mcp_search_products_subset(agent_fixture):
     assert result["score"], (
         f"Expected agent to use ONLY search_products (subset match failed).\n"
         f"Agent should NOT call rag_search for current data.\n"
+        f"Comment: {result.get('comment', 'No comment')}\n"
+        f"Actual trajectory length: {len(actual_trajectory)}"
+    )
+
+
+@pytest.mark.deterministic
+@pytest.mark.asyncio
+async def test_currency_converter_called(agent_fixture):
+    """
+    Тест 3: MCP currency_converter (конкретный инструмент).
+
+    Проверяет вызов currency_converter при запросе курса валют (MCP).
+    Evaluator: superset — минимум вызов этого инструмента, лишние вызовы допустимы.
+    """
+    agent = agent_fixture
+    user_message = "Какой сейчас курс доллара к рублю?"
+
+    actual_trajectory = await extract_trajectory(agent, "test_currency_3", user_message)
+    print_trajectory(actual_trajectory)
+
+    reference_trajectory = [
+        HumanMessage(content=user_message),
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "currency_converter",
+                "args": {},
+                "id": "call_1",
+            }],
+        ),
+        ToolMessage(
+            content="1 USD = 97.00 RUB",
+            name="currency_converter",
+            tool_call_id="call_1",
+        ),
+        AIMessage(content="Курс доллара к рублю..."),
+    ]
+
+    evaluator = create_trajectory_match_evaluator(
+        trajectory_match_mode="superset",
+        tool_args_match_mode="ignore",
+    )
+    result = evaluator(
+        outputs=actual_trajectory,
+        reference_outputs=reference_trajectory,
+    )
+
+    logger.info("=" * 60)
+    logger.info("📊 EVALUATOR RESULT")
+    logger.info(f"   Score: {result['score']}")
+    logger.info(f"   Comment: {result.get('comment', 'No comment')}")
+    logger.info(f"   Trajectory length: {len(actual_trajectory)}")
+    logger.info("=" * 60)
+
+    assert result["score"], (
+        f"Expected agent to call currency_converter (superset match failed).\n"
+        f"Comment: {result.get('comment', 'No comment')}\n"
+        f"Actual trajectory length: {len(actual_trajectory)}"
+    )
+
+
+@pytest.mark.deterministic
+@pytest.mark.asyncio
+async def test_mcp_converter_and_products_unordered(agent_fixture):
+    """
+    Тест 4: Набор инструментов без учёта порядка (trajectory unordered).
+
+    В agentevals `unordered` = двусторонний superset по списку tool_calls: те же
+    инструменты с тем же числом вызовов, без лишних (порядок в траектории не важен).
+
+    Запрос сочетает актуальный курс (MCP) и каталог вкладов (MCP) — без PDF/RAG,
+    чтобы набор был стабильным.
+    """
+    agent = agent_fixture
+    user_message = (
+        "Конвертируй 50 USD в рубли по курсу ЦБ и покажи актуальные ставки по вкладам"
+    )
+
+    actual_trajectory = await extract_trajectory(agent, "test_unordered_4", user_message)
+    print_trajectory(actual_trajectory)
+
+    reference_trajectory = [
+        HumanMessage(content=user_message),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "currency_converter",
+                    "args": {
+                        "from_currency": "USD",
+                        "to_currency": "RUB",
+                        "amount": 50,
+                    },
+                    "id": "call_1",
+                },
+                {
+                    "name": "search_products",
+                    "args": {"product_type": "deposit"},
+                    "id": "call_2",
+                },
+            ],
+        ),
+        ToolMessage(
+            content="50 USD = ... RUB",
+            name="currency_converter",
+            tool_call_id="call_1",
+        ),
+        ToolMessage(
+            content='[{"name": "Вклад", "rate": "16%"}]',
+            name="search_products",
+            tool_call_id="call_2",
+        ),
+        AIMessage(content="Курс и ставки по вкладам:"),
+    ]
+
+    evaluator = create_trajectory_match_evaluator(
+        trajectory_match_mode="unordered",
+        tool_args_match_mode="ignore",
+    )
+    result = evaluator(
+        outputs=actual_trajectory,
+        reference_outputs=reference_trajectory,
+    )
+
+    logger.info("=" * 60)
+    logger.info("📊 EVALUATOR RESULT")
+    logger.info(f"   Score: {result['score']}")
+    logger.info(f"   Comment: {result.get('comment', 'No comment')}")
+    logger.info(f"   Trajectory length: {len(actual_trajectory)}")
+    logger.info("=" * 60)
+
+    assert result["score"], (
+        "Expected exactly currency_converter + search_products "
+        "(unordered / bidirectional superset).\n"
+        f"Comment: {result.get('comment', 'No comment')}\n"
+        f"Actual trajectory length: {len(actual_trajectory)}"
+    )
+
+
+@pytest.mark.deterministic
+@pytest.mark.asyncio
+async def test_currency_converter_args_superset(agent_fixture):
+    """
+    Тест 5: Корректность аргументов инструмента.
+
+    Вызывает currency_converter; фактические args должны включать ключи референса
+    (tool_args_match_mode=superset для USD→RUB).
+    """
+    agent = agent_fixture
+    user_message = "Переведи 100 долларов в рубли"
+
+    actual_trajectory = await extract_trajectory(agent, "test_args_5", user_message)
+    print_trajectory(actual_trajectory)
+
+    reference_trajectory = [
+        HumanMessage(content=user_message),
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "currency_converter",
+                "args": {"from_currency": "USD", "to_currency": "RUB"},
+                "id": "call_1",
+            }],
+        ),
+        ToolMessage(
+            content="100.00 USD = 9 700.00 RUB",
+            name="currency_converter",
+            tool_call_id="call_1",
+        ),
+        AIMessage(content="Это составляет около ... рублей."),
+    ]
+
+    evaluator = create_trajectory_match_evaluator(
+        trajectory_match_mode="superset",
+        tool_args_match_mode="superset",
+    )
+    result = evaluator(
+        outputs=actual_trajectory,
+        reference_outputs=reference_trajectory,
+    )
+
+    logger.info("=" * 60)
+    logger.info("📊 EVALUATOR RESULT")
+    logger.info(f"   Score: {result['score']}")
+    logger.info(f"   Comment: {result.get('comment', 'No comment')}")
+    logger.info(f"   Trajectory length: {len(actual_trajectory)}")
+    logger.info("=" * 60)
+
+    assert result["score"], (
+        "Expected currency_converter with from_currency=USD and to_currency=RUB "
+        "(args superset match failed).\n"
         f"Comment: {result.get('comment', 'No comment')}\n"
         f"Actual trajectory length: {len(actual_trajectory)}"
     )

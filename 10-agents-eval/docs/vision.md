@@ -50,9 +50,10 @@
 │   └── dataset_synthesizer.py  # Синтез тестовых датасетов
 ├── tests/              # E2E тесты агента (траекторная оценка)
 │   ├── __init__.py
-│   ├── conftest.py     # Fixtures для тестов (setup агента, MCP сервера)
-│   ├── helpers.py      # Вспомогательные функции для работы с траекториями
-│   └── test_agent_e2e.py  # 4 теста с trajectory evaluation
+│   ├── conftest.py             # Fixtures для тестов (setup агента, MCP сервера)
+│   ├── helpers.py              # Вспомогательные функции для работы с траекториями
+│   ├── test_agent_deterministic.py  # 5 быстрых детерминированных тестов (match-based)
+│   └── test_agent_llm_judge.py      # 2 LLM-as-Judge теста (медленные, качественная оценка)
 ├── mcp/                # MCP серверы для расширения функциональности
 │   ├── mcp-http/       # Пример: поиск по тикетам поддержки
 │   └── mcp-bank-agent/ # MCP сервер с инструментами для банковского агента
@@ -180,12 +181,13 @@
    - `data/bank_products.json` - статические данные о продуктах Сбербанка
    - Запуск: `make run-mcp-bank` или `cd mcp/mcp-bank-agent && uv run python server.py`
 
-10. **prompts/agent_system.txt** - системный промпт агента (обновлено)
+10. **prompts/agent_system.txt** - системный промпт агента
     - Инструкции для всех 6 инструментов (rag_search + 5 MCP)
-    - Четкое описание когда использовать каждый инструмент
+    - Чёткое описание когда использовать каждый инструмент
     - Примеры диалогов для лучшего понимания
     - Правила безопасности для критичных операций (open_credit_card, open_deposit)
     - Правила уточнения параметров перед вызовом финансовых операций
+    - Исключение для `deposit_income_calculator`: если назван продукт без ставки — сначала `search_products`, затем калькулятор; при диапазоне ставок использовать максимальную
 
 **Поток данных (ReAct Agent с MCP и HITL):**
 ```
@@ -282,7 +284,7 @@ HITL: pending_interrupts словарь хранит ожидающие подт
 
 **MCP интеграция:**
 - Протокол: streamable-http (HTTP transport для MCP)
-- Порт: 8001 (8000 занят mcp-http)
+- Порт: 8000
 - Клиент: MultiServerMCPClient из langchain-mcp-adapters
 - Инструменты подключаются динамически при старте агента
 - Stateless: каждый вызов = новая сессия MCP
@@ -672,25 +674,28 @@ Hybrid retrieval + Cross-encoder переранжирование:
 **Режимы сравнения аргументов:**
 - **ignore** - аргументы игнорируются (LLM может переформулировать)
 - **exact** - точное совпадение аргументов
-- **flexible** - семантическое совпадение
+- **superset** - фактические аргументы содержат как минимум требуемые ключи/значения
 
 **Применение:**
-- Тест 1: RAG Search Tool (superset + ignore) - проверка вызова rag_search при вопросах о документах
-- Тест 2: MCP Search Products (subset + ignore) - проверка что агент НЕ вызывает лишние инструменты для актуальных данных
+- Тест 1: RAG Search Tool (superset + ignore) — rag_search вызван при вопросах о документах
+- Тест 2: MCP Search Products (subset + ignore) — агент не вызывает лишние инструменты
+- Тест 3: currency_converter called (superset + ignore) — вызов конкретного MCP-инструмента
+- Тест 4: converter + products unordered (unordered + ignore) — оба инструмента, порядок неважен
+- Тест 5: currency_converter args (superset + superset) — аргументы `from_currency`, `to_currency`
 
 #### 2. LLM-as-Judge (качественная оценка)
 
-**Evaluator:** `create_async_trajectory_llm_as_judge()`
+**Evaluator:** `create_async_trajectory_llm_as_judge(judge=ChatOpenAI(...), continuous=True)`
 
-LLM оценивает разумность траектории агента.
+LLM оценивает разумность траектории агента; `continuous=True` возвращает float 0–1.
 
 **Варианты:**
-- **Без референса** - LLM оценивает качество решений агента
-- **С референсом** - LLM сравнивает с эталонной траекторией
+- **С референсом** (`TRAJECTORY_ACCURACY_PROMPT_WITH_REFERENCE`) — LLM сравнивает с эталонной траекторией
+- **Без референса, кастомный рубрик** — LLM оценивает конкретное свойство (например, отсутствие PAN)
 
 **Применение:**
-- Тест 3: HITL Approval Flow (без референса) - проверка корректности обработки interrupt + approve/reject
-- Тест 4: Combined Scenario (с референсом) - многошаговый диалог с несколькими инструментами
+- Тест 1: Combined Scenario (с референсом) — search_products → deposit_income_calculator, score > 0.7
+- Тест 2: PII masking (кастомный рубрик TRAJECTORY_PII_SAFETY_PROMPT) — номер карты замаскирован в ответе
 
 ### Структура тестов
 
@@ -700,13 +705,16 @@ tests/
 ├── conftest.py              # Fixtures: агент, MCP сервер
 ├── helpers.py               # Вспомогательные функции
 │   ├── extract_trajectory() - запуск агента + извлечение траектории
-│   ├── print_trajectory()   - вывод траектории для отладки
-│   └── extract_trajectory_with_hitl() - для HITL тестов
-└── test_agent_e2e.py        # 4 теста траекторной оценки
-    ├── test_rag_search_superset()        # Тест 1
-    ├── test_mcp_search_products_subset() # Тест 2
-    ├── test_hitl_approval_llm_judge()    # Тест 3
-    └── test_combined_scenario_with_ref() # Тест 4
+│   └── print_trajectory()   - вывод траектории для отладки
+├── test_agent_deterministic.py   # 5 быстрых детерминированных тестов (match-based)
+│   ├── test_rag_search_superset()                  # Тест 1: RAG вызван при вопросе о документе
+│   ├── test_mcp_search_products_subset()           # Тест 2: нет лишних инструментов при поиске продуктов
+│   ├── test_currency_converter_called()            # Тест 3: currency_converter вызван (superset)
+│   ├── test_mcp_converter_and_products_unordered() # Тест 4: оба MCP-инструмента, порядок неважен
+│   └── test_currency_converter_args_superset()     # Тест 5: аргументы USD→RUB есть в вызове
+└── test_agent_llm_judge.py       # 2 LLM-as-Judge теста (медленные, требуют хорошей модели)
+    ├── test_combined_scenario_with_ref()  # Тест 1: search_products → deposit_income_calculator с референсом
+    └── test_pii_masking_llm_judge()       # Тест 2: PII-безопасность (кастомный рубрик, без референса)
 ```
 
 ### Fixtures и изоляция
@@ -724,14 +732,22 @@ tests/
 ### Запуск тестов
 
 ```bash
-# Запуск всех тестов
-make test-agent
+# Быстрые детерминированные тесты (match-based, без LLM-судьи)
+make test-deterministic
 
-# Запуск с детальным выводом
-make test-agent-verbose
+# LLM-as-Judge тесты (медленные, требуют хорошей модели)
+make test-llm-judge
 
-# Запуск конкретного теста
-pytest tests/test_agent_e2e.py::test_rag_search_superset -v
+# Все тесты
+make test-all
+
+# Конкретный тест
+pytest tests/test_agent_deterministic.py::test_rag_search_superset -v
+pytest tests/test_agent_llm_judge.py::test_pii_masking_llm_judge -v
+
+# По маркеру
+pytest -m deterministic -v
+pytest -m llm_judge -v
 ```
 
 ### Пример HITL теста
@@ -753,7 +769,7 @@ HITL (Human-in-the-Loop) тесты проверяют что агент кор�
 **KISS и YAGNI:**
 - Простые функции без классов
 - Минимум абстракций
-- Все тесты в одном файле `test_agent_e2e.py`
+- Детерминированные и LLM-as-Judge тесты разделены в два файла (разная скорость и стоимость)
 - Fixtures только для общих setup операций
 
 **Что тестируем:**

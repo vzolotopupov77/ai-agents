@@ -707,86 +707,73 @@ RAGAS_EMBEDDING_MODEL=text-embedding-3-large
 
 ### Типы тестов
 
-**1. Trajectory Match (детерминированная проверка)**
+**1. Trajectory Match (детерминированная проверка)** — `tests/test_agent_deterministic.py`
 
-Проверяет что агент вызывает правильные инструменты:
+Быстрые тесты без LLM-судьи, проверяют набор и аргументы вызовов:
 
 ```python
-# Тест 1: RAG Search Tool (Superset)
-# Агент должен минимум вызвать rag_search при вопросах о документах
-test_rag_search_superset()
-
-# Тест 2: MCP Search Products (Subset)  
-# Агент НЕ должен вызывать лишние инструменты для актуальных данных
-test_mcp_search_products_subset()
+test_rag_search_superset()                  # rag_search вызван при вопросе о документе
+test_mcp_search_products_subset()           # нет лишних инструментов при поиске продуктов
+test_currency_converter_called()            # currency_converter вызван (superset)
+test_mcp_converter_and_products_unordered() # оба MCP-инструмента в любом порядке
+test_currency_converter_args_superset()     # аргументы from_currency/to_currency присутствуют
 ```
 
-**2. LLM-as-Judge (качественная оценка)**
+**2. LLM-as-Judge (качественная оценка)** — `tests/test_agent_llm_judge.py`
 
-LLM оценивает разумность траектории:
+LLM оценивает разумность траектории, возвращает score 0–1:
 
 ```python
-# Тест 3: HITL Approval Flow
-# Проверка корректности обработки interrupt + approve/reject
-test_hitl_approval_llm_judge()
-
-# Тест 4: Combined Scenario
-# Многошаговый диалог с несколькими инструментами
-test_combined_scenario_with_ref()
+test_combined_scenario_with_ref()  # search_products → deposit_income_calculator (с референсом)
+test_pii_masking_llm_judge()       # номер карты замаскирован в ответе (кастомный рубрик)
 ```
 
 ### Запуск тестов
 
 ```bash
-# Запуск всех тестов
-make test-agent
+# Быстрые детерминированные тесты
+make test-deterministic
 
-# Запуск с детальным выводом траекторий
-make test-agent-verbose
+# LLM-as-Judge тесты (медленные, ~90 сек каждый)
+make test-llm-judge
 
-# Запуск конкретного теста
-pytest tests/test_agent_e2e.py::test_rag_search_superset -v
-```
+# Все тесты
+make test-all
 
-### Пример вывода
-
-```
-tests/test_agent_e2e.py::test_rag_search_superset PASSED        [25%]
-tests/test_agent_e2e.py::test_mcp_search_products_subset PASSED [50%]
-tests/test_agent_e2e.py::test_hitl_approval_llm_judge PASSED    [75%]
-tests/test_agent_e2e.py::test_combined_scenario_with_ref PASSED [100%]
-
-====== 4 passed in 12.34s ======
+# Конкретный тест
+pytest tests/test_agent_deterministic.py::test_rag_search_superset -v
+pytest tests/test_agent_llm_judge.py::test_pii_masking_llm_judge -v
 ```
 
 ### Структура тестов
 
 ```
 tests/
-├── conftest.py         # Fixtures (agent, уникальные thread_id)
-├── helpers.py          # Функции для работы с траекториями
-└── test_agent_e2e.py   # 4 теста траекторной оценки
+├── conftest.py                    # Fixtures (agent, уникальные thread_id)
+├── helpers.py                     # Функции для работы с траекториями
+├── test_agent_deterministic.py    # 5 быстрых match-based тестов
+└── test_agent_llm_judge.py        # 2 LLM-as-Judge теста
 ```
 
 **Технологии:**
-- `pytest` - фреймворк тестирования
-- `pytest-asyncio` - поддержка async тестов
-- `agentevals` - траекторная оценка агентов
-- `MemorySaver` - изоляция тестовых сессий
+- `pytest` + `pytest-asyncio` — фреймворк тестирования
+- `agentevals` — траекторная оценка агентов
+- `langchain-openai` — ChatOpenAI как LLM-судья
+- `MemorySaver` — изоляция тестовых сессий
 
 ## 🔧 Разработка
 
 ### Команды Makefile
 
 ```bash
-make install         # Установить зависимости
-make run             # Запустить бота
-make run-mcp-bank    # Запустить MCP сервер (порт 8000)
-make test-mcp-bank   # Протестировать MCP сервер
-make test-agent      # Запустить E2E тесты агента
-make test-agent-verbose  # Запустить тесты с детальным выводом
-make dataset         # Создать тестовый датасет
-make dataset-upload  # Загрузить датасет в LangSmith
+make install              # Установить зависимости
+make run                  # Запустить бота
+make run-mcp-bank         # Запустить MCP сервер (порт 8000)
+make test-deterministic   # Быстрые детерминированные тесты (match-based)
+make test-llm-judge       # LLM-as-Judge тесты (медленные)
+make test-all             # Все тесты
+make dataset              # Создать тестовый датасет
+make dataset-upload       # Загрузить датасет в LangSmith
 ```
 
 ### 🏦 MCP Сервер
@@ -838,8 +825,12 @@ MCP_SERVER_TRANSPORT=streamable_http
    - Учет налогов (НДФЛ 13% на доход свыше 150,000₽)
    - Детализированная разбивка по периодам
    
-4. **open_credit_card** - открытие дебетовых и кредитных карт
-   - **Human-in-the-Loop** - требует подтверждения пользователя
+4. **open_deposit** - открытие депозитного счёта (вклада)
+   - **Human-in-the-Loop** — требует подтверждения пользователя
+   - Параметры: название вклада, сумма, срок
+   
+5. **open_credit_card** - открытие дебетовых и кредитных карт
+   - **Human-in-the-Loop** — требует подтверждения пользователя
    - Inline кнопки для Approve/Reject
    - Безопасность: CVV не возвращается
 
